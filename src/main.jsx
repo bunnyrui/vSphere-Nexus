@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
+  Bookmark,
   CheckCircle2,
   Copy,
+  Download,
   KeyRound,
+  Layers,
   Network,
   Play,
   Plus,
   Power,
   RefreshCw,
+  RotateCcw,
   Server,
   Settings2,
   ShieldAlert,
@@ -22,6 +26,7 @@ import "./styles.css";
 const emptyVm = { name: "lab-{{index}}" };
 const defaultState = {
   dryRun: true,
+  concurrency: 1,
   sourceType: "inventory",
   sourceInventoryPath: "",
   vmNaming: {
@@ -70,6 +75,9 @@ function App() {
   const [probing, setProbing] = useState(false);
   const [inventory, setInventory] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false);
+  const [templateName, setTemplateName] = useState("");
 
   const activeJob = jobs.find((job) => job.id === activeJobId) ?? jobs[0];
   const effectiveVms = getEffectiveVms(form);
@@ -84,10 +92,15 @@ function App() {
     if (!activeJobId && data.jobs?.[0]) setActiveJobId(data.jobs[0].id);
   }
 
+  async function loadTemplates() {
+    const response = await fetch("/api/templates");
+    const data = await response.json();
+    setTemplates(data.templates ?? []);
+  }
+
   useEffect(() => {
     refreshJobs();
-    const timer = setInterval(refreshJobs, 1800);
-    return () => clearInterval(timer);
+    loadTemplates();
   }, []);
 
   useEffect(() => {
@@ -124,6 +137,18 @@ function App() {
     await refreshJobs();
   }
 
+  async function retryActiveJob() {
+    if (!activeJob) return;
+    try {
+      const response = await fetch(`/api/jobs/${activeJob.id}/retry`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "重试失败");
+      await refreshJobs();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function probeTarget() {
     setError("");
     setProbe(null);
@@ -150,6 +175,43 @@ function App() {
   function resetConnection() {
     setProbe(null);
     setInventory(null);
+  }
+
+  async function saveAsTemplate() {
+    if (!templateName.trim()) return;
+    const { target, ...rest } = form;
+    const { password, ...safeTarget } = target;
+    const config = { ...rest, target: safeTarget };
+    try {
+      const response = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: templateName.trim(), config })
+      });
+      if (!response.ok) throw new Error("保存失败");
+      setShowTemplateDialog(false);
+      setTemplateName("");
+      await loadTemplates();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadTemplate(name) {
+    const tpl = templates.find((t) => t.name === name);
+    if (!tpl) return;
+    const session = JSON.parse(sessionStorage.getItem(sessionStorageKey) || "{}");
+    const loaded = mergeState(defaultState, tpl.config, session);
+    loaded.sourceInventoryPath = tpl.config.sourceInventoryPath || "";
+    loaded.networkMappings = tpl.config.networkMappings || defaultState.networkMappings;
+    setForm(loaded);
+    setInventory(null);
+    setProbe(null);
+  }
+
+  async function deleteTemplate(name) {
+    await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE" });
+    await loadTemplates();
   }
 
   return (
@@ -191,15 +253,47 @@ function App() {
             <p>Deployment Console</p>
             <h1>批量部署 OVA 到 ESXi</h1>
           </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={form.dryRun}
-              onChange={(event) => setForm((current) => ({ ...current, dryRun: event.target.checked }))}
-            />
-            <span>干跑模式</span>
-          </label>
+          <div className="topbarActions">
+            {templates.length > 0 && (
+              <select
+                className="templateSelect"
+                value=""
+                onChange={(e) => { if (e.target.value) loadTemplate(e.target.value); }}
+              >
+                <option value="">加载模板...</option>
+                {templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+              </select>
+            )}
+            <button type="button" className="secondaryAction" onClick={() => setShowTemplateDialog(true)}>
+              <Bookmark size={16} />
+              保存模板
+            </button>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={form.dryRun}
+                onChange={(event) => setForm((current) => ({ ...current, dryRun: event.target.checked }))}
+              />
+              <span>干跑模式</span>
+            </label>
+          </div>
         </header>
+
+        {showTemplateDialog && (
+          <div className="dialogOverlay" onClick={() => setShowTemplateDialog(false)}>
+            <div className="dialog" onClick={(e) => e.stopPropagation()}>
+              <h3>保存为部署模板</h3>
+              <div className="field">
+                <label>模板名称</label>
+                <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="例如：生产环境基础模板" />
+              </div>
+              <div className="dialogActions">
+                <button className="secondaryAction" onClick={() => setShowTemplateDialog(false)}>取消</button>
+                <button className="primaryAction" onClick={saveAsTemplate}>保存</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="contentGrid">
           <form className="panel formPanel" onSubmit={submitDeployment}>
@@ -337,6 +431,22 @@ function App() {
 
             <VmEditor form={form} setForm={setForm} />
 
+            <div className="field">
+              <label><Layers size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />并发数</label>
+              <select
+                value={form.concurrency ?? 1}
+                onChange={(event) => updateNested(setForm, ["concurrency"], Number(event.target.value))}
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="hintBox">
+              并发数控制同时运行的 ovftool 进程数量。建议根据 ESXi 主机性能和网络带宽设置，通常 3-5 较合适。
+            </div>
+
             {error && <div className="alert"><ShieldAlert size={16} />{error}</div>}
 
             <button className="primaryAction" type="submit" disabled={submitting}>
@@ -345,7 +455,12 @@ function App() {
             </button>
           </form>
 
-          <JobPanel job={activeJob} onCancel={cancelActiveJob} onRefresh={refreshJobs} />
+          <JobPanel
+            job={activeJob}
+            onCancel={cancelActiveJob}
+            onRetry={retryActiveJob}
+            onRefresh={refreshJobs}
+          />
         </div>
       </section>
     </main>
@@ -512,14 +627,83 @@ function VmEditor({ form, setForm }) {
             rows={8}
             spellCheck="false"
           />
-          <div className="hintBox">一行一个新虚拟机名称。也可以写 {{index}}，提交时会替换成序号。</div>
+          <div className="hintBox">一行一个新虚拟机名称。也可以写 {"{{index}}"}，提交时会替换成序号。</div>
         </>
       )}
     </section>
   );
 }
 
-function JobPanel({ job, onCancel, onRefresh }) {
+function JobPanel({ job, onCancel, onRetry, onRefresh }) {
+  const logBoxRef = useRef(null);
+  const [sseLogs, setSseLogs] = useState([]);
+  const [sseStatus, setSseStatus] = useState(null);
+
+  useEffect(() => {
+    if (!job) return;
+    if (job.status !== "running" && job.status !== "queued") {
+      setSseLogs([]);
+      setSseStatus(null);
+      return;
+    }
+
+    setSseLogs([]);
+    const eventSource = new EventSource(`/api/jobs/${job.id}/events`);
+
+    eventSource.addEventListener("log", (event) => {
+      setSseLogs((prev) => [...prev, JSON.parse(event.data)]);
+    });
+
+    eventSource.addEventListener("status", (event) => {
+      setSseStatus(JSON.parse(event.data));
+    });
+
+    eventSource.addEventListener("close", () => {
+      eventSource.close();
+      onRefresh?.();
+    });
+
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [job?.id, job?.status]);
+
+  const allLogs = useMemo(() => {
+    const base = job?.logs ?? [];
+    if (sseLogs.length === 0) return base;
+    return [...base, ...sseLogs];
+  }, [job?.logs, sseLogs]);
+
+  useEffect(() => {
+    if (logBoxRef.current) {
+      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
+    }
+  }, [allLogs]);
+
+  const displayStatus = sseStatus?.status ?? job?.status;
+  const displayProgress = sseStatus?.progress ?? job?.progress;
+
+  function exportLogs() {
+    if (!job) return;
+    const lines = allLogs.map((l) => `[${new Date(l.at).toLocaleString()}] [${l.stream}] ${l.message}`);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `massova-${job.id}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const completed = displayProgress?.completed ?? 0;
+  const total = displayProgress?.total ?? 0;
+  const failed = displayProgress?.failed ?? 0;
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
   return (
     <aside className="panel jobPanel">
       <div className="jobHeader">
@@ -528,12 +712,22 @@ function JobPanel({ job, onCancel, onRefresh }) {
           <h2>{job ? job.id : "暂无任务"}</h2>
         </div>
         <div className="actions">
+          {job && (
+            <button className="iconButton" type="button" onClick={exportLogs} aria-label="导出日志" title="导出日志">
+              <Download size={17} />
+            </button>
+          )}
           <button className="iconButton" type="button" onClick={onRefresh} aria-label="刷新任务">
             <RefreshCw size={17} />
           </button>
-          {job?.status === "running" && (
+          {displayStatus === "running" && (
             <button className="iconButton danger" type="button" onClick={onCancel} aria-label="取消任务">
               <XCircle size={17} />
+            </button>
+          )}
+          {displayStatus === "failed" && (
+            <button className="iconButton" type="button" onClick={onRetry} aria-label="重试失败项" title="重试失败项">
+              <RotateCcw size={17} />
             </button>
           )}
         </div>
@@ -542,17 +736,27 @@ function JobPanel({ job, onCancel, onRefresh }) {
       {job ? (
         <>
           <div className="statusStrip">
-            <StatusIcon status={job.status} />
-            <span>{job.status}</span>
-            <strong>{job.progress.completed}/{job.progress.total}</strong>
+            <StatusIcon status={displayStatus} />
+            <span>{displayStatus}</span>
+            <strong>{completed}/{total}</strong>
           </div>
+          <div className="progressBar">
+            <div className="progressFill" style={{ width: `${percent}%` }} />
+          </div>
+          {(completed > 0 || failed > 0) && (
+            <div className="progressMeta">
+              <span className="ok">{completed} 完成</span>
+              {failed > 0 && <span className="bad">{failed} 失败</span>}
+              <span>{total - completed - failed} 待执行</span>
+            </div>
+          )}
           <div className="commandList">
             {(job.commands ?? []).slice(0, 5).map((command, index) => (
               <code key={index}>{command}</code>
             ))}
           </div>
-          <div className="logBox">
-            {(job.logs ?? []).map((line, index) => (
+          <div className="logBox" ref={logBoxRef}>
+            {allLogs.map((line, index) => (
               <div className={`logLine ${line.stream}`} key={`${line.at}-${index}`}>
                 <time>{new Date(line.at).toLocaleTimeString()}</time>
                 <span>{line.message}</span>
@@ -572,7 +776,7 @@ function JobPanel({ job, onCancel, onRefresh }) {
 
 function StatusIcon({ status }) {
   if (status === "succeeded") return <CheckCircle2 className="ok" size={17} />;
-  if (status === "failed" || status === "cancelled") return <XCircle className="bad" size={17} />;
+  if (status === "failed" || status === "cancelled" || status === "interrupted") return <XCircle className="bad" size={17} />;
   return <Activity className="run" size={17} />;
 }
 

@@ -3,7 +3,7 @@ import express from "express";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createJob, getJob, listJobs, cancelJob } from "./jobs.js";
+import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore } from "./jobs.js";
 import { makeViUrl, runOvfTool } from "./ovftool.js";
 import { discoverVsphere } from "./vsphere.js";
 
@@ -32,10 +32,60 @@ app.get("/api/jobs/:id", (req, res) => {
   res.json({ job });
 });
 
+app.get("/api/jobs/:id/events", (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  let lastLogIndex = 0;
+
+  const interval = setInterval(() => {
+    const current = getJob(req.params.id);
+    if (!current) {
+      clearInterval(interval);
+      res.write(`event: close\ndata: {}\n\n`);
+      res.end();
+      return;
+    }
+
+    if (current.logs.length > lastLogIndex) {
+      const newLogs = current.logs.slice(lastLogIndex);
+      lastLogIndex = current.logs.length;
+      for (const log of newLogs) {
+        res.write(`event: log\ndata: ${JSON.stringify(log)}\n\n`);
+      }
+    }
+
+    res.write(`event: status\ndata: ${JSON.stringify({
+      status: current.status,
+      progress: current.progress,
+      vmResults: current.vmResults
+    })}\n\n`);
+
+    if (current.status !== "running" && current.status !== "queued") {
+      clearInterval(interval);
+      res.write(`event: close\ndata: {}\n\n`);
+      res.end();
+    }
+  }, 500);
+
+  req.on("close", () => clearInterval(interval));
+});
+
 app.post("/api/jobs/:id/cancel", (req, res) => {
   const cancelled = cancelJob(req.params.id);
   if (!cancelled) return res.status(404).json({ error: "Job not found or already finished" });
   res.json({ ok: true });
+});
+
+app.post("/api/jobs/:id/retry", (req, res) => {
+  const job = retryFailed(req.params.id);
+  if (!job) return res.status(400).json({ error: "Job not found or not in failed state" });
+  res.json({ job });
 });
 
 app.post("/api/deployments", async (req, res) => {
@@ -92,18 +142,78 @@ app.post("/api/targets/discover", async (req, res) => {
   }
 });
 
+app.get("/api/templates", (_req, res) => {
+  try {
+    const templatesFile = join(__dirname, "..", "data", "templates.json");
+    import("node:fs/promises").then(({ readFile }) =>
+      readFile(templatesFile, "utf-8")
+        .then((data) => res.json({ templates: JSON.parse(data) }))
+        .catch(() => res.json({ templates: [] }))
+    );
+  } catch {
+    res.json({ templates: [] });
+  }
+});
+
+app.post("/api/templates", async (req, res) => {
+  const { name, config } = req.body;
+  if (!name || !config) return res.status(400).json({ error: "需要模板名称和配置" });
+
+  const { readFile: rf, writeFile: wf, mkdir } = await import("node:fs/promises");
+  const templatesFile = join(__dirname, "..", "data", "templates.json");
+  let templates = [];
+  try {
+    templates = JSON.parse(await rf(templatesFile, "utf-8"));
+  } catch {
+  }
+
+  const existing = templates.findIndex((t) => t.name === name);
+  const entry = { name, config, updatedAt: new Date().toISOString() };
+  if (existing >= 0) {
+    templates[existing] = { ...templates[existing], ...entry };
+  } else {
+    entry.createdAt = new Date().toISOString();
+    templates.push(entry);
+  }
+
+  await mkdir(dirname(templatesFile), { recursive: true });
+  await wf(templatesFile, JSON.stringify(templates, null, 2), "utf-8");
+  res.json({ ok: true, templates });
+});
+
+app.delete("/api/templates/:name", async (req, res) => {
+  const { readFile: rf, writeFile: wf, mkdir } = await import("node:fs/promises");
+  const templatesFile = join(__dirname, "..", "data", "templates.json");
+  let templates = [];
+  try {
+    templates = JSON.parse(await rf(templatesFile, "utf-8"));
+  } catch {
+  }
+
+  templates = templates.filter((t) => t.name !== req.params.name);
+  await mkdir(dirname(templatesFile), { recursive: true });
+  await wf(templatesFile, JSON.stringify(templates, null, 2), "utf-8");
+  res.json({ ok: true, templates });
+});
+
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(distDir));
   app.get(/.*/, (_req, res) => res.sendFile(join(distDir, "index.html")));
 }
 
-app.listen(port, () => {
-  console.log(`MassOVA server listening on http://localhost:${port}`);
-});
+async function start() {
+  await initStore();
+  app.listen(port, () => {
+    console.log(`MassOVA server listening on http://localhost:${port}`);
+  });
+}
+
+start();
 
 function normalizeDeployment(body) {
   return {
     dryRun: body.dryRun !== false,
+    concurrency: Number(body.concurrency) || 1,
     sourceType: "inventory",
     sourceInventoryPath: String(body.sourceInventoryPath ?? "").trim(),
     target: normalizeTarget(body.target ?? {}),
