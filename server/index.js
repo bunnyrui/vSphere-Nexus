@@ -20,24 +20,17 @@ const sessions = new Map();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
+const publicPaths = new Set(["/auth/login", "/auth/status", "/health"]);
+
 if (authEnabled) {
   app.use("/api", (req, res, next) => {
-    if (req.path === "/auth/login" || req.path === "/auth/status") return next();
+    if (publicPaths.has(req.path)) return next();
     const token = req.headers.authorization?.replace("Bearer ", "");
     if (!token || !sessions.has(token)) {
       return res.status(401).json({ error: "未认证" });
     }
     next();
   });
-
-  app.use(express.static.bind(null, distDir) ? (req, res, next) => {
-    if (req.path.startsWith("/api")) return next();
-    if (process.env.NODE_ENV === "production") {
-      express.static(distDir)(req, res, next);
-    } else {
-      next();
-    }
-  } : (req, res, next) => next());
 }
 
 app.get("/api/auth/status", (_req, res) => {
