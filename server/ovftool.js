@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, chmod } from "node:fs/promises";
 import { constants } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { platform } from "node:os";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export async function fileExists(path) {
   try {
@@ -17,8 +22,57 @@ export function maskSecret(value = "") {
   return `${value.slice(0, 1)}${"*".repeat(Math.min(value.length - 1, 10))}`;
 }
 
+const platformBinaries = {
+  darwin: ["ovftool"],
+  linux: ["ovftool"],
+  win32: ["ovftool.exe"]
+};
+
+let cachedPath = null;
+
+export async function resolveOvfToolPath() {
+  if (process.env.OVFTOOL_PATH) {
+    cachedPath = process.env.OVFTOOL_PATH;
+    return cachedPath;
+  }
+
+  const currentPlatform = platform();
+  const candidates = platformBinaries[currentPlatform] ?? ["ovftool"];
+  const binDir = join(__dirname, "..", "bin", currentPlatform);
+
+  for (const bin of candidates) {
+    const fullPath = join(binDir, bin);
+    if (await fileExists(fullPath)) {
+      try {
+        await chmod(fullPath, 0o755);
+      } catch {
+      }
+      cachedPath = fullPath;
+      return cachedPath;
+    }
+  }
+
+  const commonPaths = [
+    "/usr/local/bin/ovftool",
+    "/usr/bin/ovftool",
+    "/Applications/VMware OVF Tool/ovftool",
+    "C:\\Program Files\\VMware\\VMware OVF Tool\\ovftool.exe",
+    join(process.env.LOCALAPPDATA ?? "", "VMware", "OVF Tool", "ovftool.exe")
+  ].filter(Boolean);
+
+  for (const p of commonPaths) {
+    if (await fileExists(p)) {
+      cachedPath = p;
+      return cachedPath;
+    }
+  }
+
+  cachedPath = "ovftool";
+  return cachedPath;
+}
+
 export function getOvfToolPath() {
-  return process.env.OVFTOOL_PATH || "ovftool";
+  return cachedPath || "ovftool";
 }
 
 export function renderTemplate(template = "", vm, index) {

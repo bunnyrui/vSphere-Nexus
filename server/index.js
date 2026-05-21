@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore } from "./jobs.js";
-import { makeViUrl, runOvfTool } from "./ovftool.js";
+import { makeViUrl, runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
 import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
 
 const app = express();
@@ -49,10 +49,12 @@ app.post("/api/auth/login", (req, res) => {
 });
 
 app.get("/api/health", (_req, res) => {
+  const resolvedPath = getOvfToolPath();
   res.json({
     ok: true,
     authEnabled,
-    ovftoolAvailable: Boolean(process.env.OVFTOOL_PATH) || existsSync("/usr/local/bin/ovftool") || existsSync("/Applications/VMware OVF Tool/ovftool")
+    ovftoolPath: resolvedPath !== "ovftool" ? resolvedPath : null,
+    ovftoolAvailable: resolvedPath !== "ovftool"
   });
 });
 
@@ -281,8 +283,14 @@ if (process.env.NODE_ENV === "production") {
 
 async function start() {
   await initStore();
+  const ovftoolPath = await resolveOvfToolPath();
   app.listen(port, () => {
     console.log(`MassOVA server listening on http://localhost:${port}${authEnabled ? " (auth enabled)" : ""}`);
+    if (ovftoolPath !== "ovftool") {
+      console.log(`ovftool: ${ovftoolPath}`);
+    } else {
+      console.log("ovftool: 未找到内置或系统 ovftool，请安装或设置 OVFTOOL_PATH");
+    }
   });
 }
 

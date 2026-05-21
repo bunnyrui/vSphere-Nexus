@@ -1,5 +1,9 @@
 node_modules/
 dist/
 data/
+bin/darwin/ovftool
+bin/linux/ovftool
+bin/win32/ovftool.exe
+bin/win32/*.dll
 .DS_Store
 *.log
