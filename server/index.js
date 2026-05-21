@@ -1,23 +1,64 @@
 import cors from "cors";
+import crypto from "node:crypto";
 import express from "express";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore } from "./jobs.js";
 import { makeViUrl, runOvfTool } from "./ovftool.js";
-import { discoverVsphere } from "./vsphere.js";
+import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = join(__dirname, "..", "dist");
+const authUser = process.env.MASSOVA_USER || "";
+const authPass = process.env.MASSOVA_PASS || "";
+const authEnabled = Boolean(authUser && authPass);
+const sessions = new Map();
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
+if (authEnabled) {
+  app.use("/api", (req, res, next) => {
+    if (req.path === "/auth/login" || req.path === "/auth/status") return next();
+    const token = req.headers.authorization?.replace("Bearer ", "");
+    if (!token || !sessions.has(token)) {
+      return res.status(401).json({ error: "未认证" });
+    }
+    next();
+  });
+
+  app.use(express.static.bind(null, distDir) ? (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    if (process.env.NODE_ENV === "production") {
+      express.static(distDir)(req, res, next);
+    } else {
+      next();
+    }
+  } : (req, res, next) => next());
+}
+
+app.get("/api/auth/status", (_req, res) => {
+  res.json({ enabled: authEnabled });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  if (!authEnabled) return res.json({ ok: true, token: "" });
+  const { username, password } = req.body ?? {};
+  if (username === authUser && password === authPass) {
+    const token = crypto.randomBytes(24).toString("hex");
+    sessions.set(token, { createdAt: Date.now() });
+    return res.json({ ok: true, token });
+  }
+  res.status(401).json({ ok: false, error: "用户名或密码错误" });
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
+    authEnabled,
     ovftoolAvailable: Boolean(process.env.OVFTOOL_PATH) || existsSync("/usr/local/bin/ovftool") || existsSync("/Applications/VMware OVF Tool/ovftool")
   });
 });
@@ -88,6 +129,52 @@ app.post("/api/jobs/:id/retry", (req, res) => {
   res.json({ job });
 });
 
+app.post("/api/deployments/check", async (req, res) => {
+  const { target, vms, sourceInventoryPath } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+
+  const vmNames = (vms ?? []).map((vm) => vm.name).filter(Boolean);
+  if (!vmNames.length) return res.json({ conflicts: [], warnings: [] });
+
+  try {
+    const inventory = await discoverVsphere(normalizedTarget);
+    const conflicts = await checkVmNameConflicts(normalizedTarget, vmNames);
+
+    const warnings = [];
+    const selectedDatastore = inventory.datastores?.find((ds) => ds.name === target?.datastore);
+    if (selectedDatastore && selectedDatastore.freeSpace > 0) {
+      const templateItem = inventory.inventoryItems?.find((item) => item.inventoryPath === sourceInventoryPath);
+      const templateSize = templateItem?.storageCommitted ?? 0;
+      if (templateSize > 0) {
+        const totalNeeded = templateSize * vmNames.length;
+        if (totalNeeded > selectedDatastore.freeSpace) {
+          warnings.push(
+            `Datastore "${selectedDatastore.name}" 可用空间 ${formatBytes(selectedDatastore.freeSpace)}，` +
+            `预估需要 ${formatBytes(totalNeeded)} (${vmNames.length} 台 × ${formatBytes(templateSize)})，空间可能不足`
+          );
+        }
+      }
+    }
+
+    res.json({
+      conflicts,
+      warnings,
+      datastoreInfo: selectedDatastore ? {
+        name: selectedDatastore.name,
+        capacity: formatBytes(selectedDatastore.capacity),
+        freeSpace: formatBytes(selectedDatastore.freeSpace),
+        freePercent: selectedDatastore.capacity > 0
+          ? Math.round((selectedDatastore.freeSpace / selectedDatastore.capacity) * 100)
+          : 0
+      } : null
+    });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "检查失败"] });
+  }
+});
+
 app.post("/api/deployments", async (req, res) => {
   const validation = validateDeployment(req.body);
   if (validation.length) return res.status(400).json({ errors: validation });
@@ -142,14 +229,12 @@ app.post("/api/targets/discover", async (req, res) => {
   }
 });
 
-app.get("/api/templates", (_req, res) => {
+app.get("/api/templates", async (_req, res) => {
   try {
+    const { readFile } = await import("node:fs/promises");
     const templatesFile = join(__dirname, "..", "data", "templates.json");
-    import("node:fs/promises").then(({ readFile }) =>
-      readFile(templatesFile, "utf-8")
-        .then((data) => res.json({ templates: JSON.parse(data) }))
-        .catch(() => res.json({ templates: [] }))
-    );
+    const data = await readFile(templatesFile, "utf-8");
+    res.json({ templates: JSON.parse(data) });
   } catch {
     res.json({ templates: [] });
   }
@@ -204,7 +289,7 @@ if (process.env.NODE_ENV === "production") {
 async function start() {
   await initStore();
   app.listen(port, () => {
-    console.log(`MassOVA server listening on http://localhost:${port}`);
+    console.log(`MassOVA server listening on http://localhost:${port}${authEnabled ? " (auth enabled)" : ""}`);
   });
 }
 
@@ -289,4 +374,11 @@ function parseCompletions(output) {
 
 function sanitizeProbeOutput(output) {
   return output.replace(/vi:\/\/([^:]+):([^@]+)@/g, "vi://$1:***@");
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }

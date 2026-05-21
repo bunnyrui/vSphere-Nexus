@@ -2,12 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
+  AlertTriangle,
   Bookmark,
   CheckCircle2,
   Copy,
   Download,
+  HardDrive,
   KeyRound,
   Layers,
+  LogIn,
   Network,
   Play,
   Plus,
@@ -55,6 +58,69 @@ const defaultState = {
 
 const storageKey = "massova.form.v1";
 const sessionStorageKey = "massova.session.v1";
+const tokenKey = "massova.token";
+
+function authHeaders() {
+  const token = localStorage.getItem(tokenKey);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "登录失败");
+      if (data.token) localStorage.setItem(tokenKey, data.token);
+      onLogin();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="loginPage">
+      <div className="loginCard">
+        <div className="brand" style={{ justifyContent: "center", marginBottom: 24 }}>
+          <span className="brandMark"><Server size={22} /></span>
+          <div>
+            <strong>MassOVA</strong>
+            <small>ESXi 批量 OVA 部署</small>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="field">
+            <label>用户名</label>
+            <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+          </div>
+          <div className="field">
+            <label>密码</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          {error && <div className="alert"><ShieldAlert size={16} />{error}</div>}
+          <button className="primaryAction" type="submit" disabled={loading}>
+            <LogIn size={18} />
+            {loading ? "登录中" : "登录"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function loadInitialState() {
   try {
@@ -67,6 +133,7 @@ function loadInitialState() {
 }
 
 function App() {
+  const [authed, setAuthed] = useState(true);
   const [form, setForm] = useState(loadInitialState);
   const [jobs, setJobs] = useState([]);
   const [activeJobId, setActiveJobId] = useState(null);
@@ -78,6 +145,9 @@ function App() {
   const [templates, setTemplates] = useState([]);
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
   const [templateName, setTemplateName] = useState("");
+  const [warnings, setWarnings] = useState([]);
+  const [conflicts, setConflicts] = useState([]);
+  const [datastoreInfo, setDatastoreInfo] = useState(null);
 
   const activeJob = jobs.find((job) => job.id === activeJobId) ?? jobs[0];
   const effectiveVms = getEffectiveVms(form);
@@ -86,22 +156,41 @@ function App() {
   const sourceNetworkOptions = selectedInventorySource?.sourceNetworks ?? [];
 
   async function refreshJobs() {
-    const response = await fetch("/api/jobs");
+    const response = await fetch("/api/jobs", { headers: authHeaders() });
+    if (response.status === 401) { setAuthed(false); return; }
     const data = await response.json();
     setJobs(data.jobs ?? []);
     if (!activeJobId && data.jobs?.[0]) setActiveJobId(data.jobs[0].id);
   }
 
   async function loadTemplates() {
-    const response = await fetch("/api/templates");
+    const response = await fetch("/api/templates", { headers: authHeaders() });
+    if (response.status === 401) { setAuthed(false); return; }
     const data = await response.json();
     setTemplates(data.templates ?? []);
   }
 
+  async function checkAuth() {
+    try {
+      const response = await fetch("/api/auth/status");
+      const data = await response.json();
+      if (data.enabled && !localStorage.getItem(tokenKey)) {
+        setAuthed(false);
+      }
+    } catch {
+      setAuthed(false);
+    }
+  }
+
   useEffect(() => {
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!authed) return;
     refreshJobs();
     loadTemplates();
-  }, []);
+  }, [authed]);
 
   useEffect(() => {
     const { target, ...rest } = form;
@@ -110,19 +199,74 @@ function App() {
     sessionStorage.setItem(sessionStorageKey, JSON.stringify({ target: { password } }));
   }, [form]);
 
+  if (!authed) {
+    return <LoginPage onLogin={() => { setAuthed(true); }} />;
+  }
+
   async function submitDeployment(event) {
     event.preventDefault();
+    setError("");
+    setConflicts([]);
+    setWarnings([]);
+    setSubmitting(true);
+    try {
+      if (inventory) {
+        const checkResponse = await fetch("/api/deployments/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            target: form.target,
+            vms: effectiveVms,
+            sourceInventoryPath: form.sourceInventoryPath
+          })
+        });
+        if (checkResponse.status === 401) { setAuthed(false); return; }
+        if (checkResponse.ok) {
+          const checkData = await checkResponse.json();
+          setConflicts(checkData.conflicts ?? []);
+          setWarnings(checkData.warnings ?? []);
+          setDatastoreInfo(checkData.datastoreInfo ?? null);
+          if (checkData.conflicts?.length) {
+            setSubmitting(false);
+            return;
+          }
+        }
+      }
+
+      const response = await fetch("/api/deployments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ ...form, vms: effectiveVms })
+      });
+      if (response.status === 401) { setAuthed(false); return; }
+      const data = await response.json();
+      if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
+      setActiveJobId(data.job.id);
+      setConflicts([]);
+      setWarnings([]);
+      await refreshJobs();
+    } catch (err) {
+      setError(err.message || "提交失败");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function forceSubmit() {
     setError("");
     setSubmitting(true);
     try {
       const response = await fetch("/api/deployments", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ ...form, vms: effectiveVms })
       });
+      if (response.status === 401) { setAuthed(false); return; }
       const data = await response.json();
       if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
       setActiveJobId(data.job.id);
+      setConflicts([]);
+      setWarnings([]);
       await refreshJobs();
     } catch (err) {
       setError(err.message || "提交失败");
@@ -133,14 +277,14 @@ function App() {
 
   async function cancelActiveJob() {
     if (!activeJob) return;
-    await fetch(`/api/jobs/${activeJob.id}/cancel`, { method: "POST" });
+    await fetch(`/api/jobs/${activeJob.id}/cancel`, { method: "POST", headers: authHeaders() });
     await refreshJobs();
   }
 
   async function retryActiveJob() {
     if (!activeJob) return;
     try {
-      const response = await fetch(`/api/jobs/${activeJob.id}/retry`, { method: "POST" });
+      const response = await fetch(`/api/jobs/${activeJob.id}/retry`, { method: "POST", headers: authHeaders() });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "重试失败");
       await refreshJobs();
@@ -153,13 +297,15 @@ function App() {
     setError("");
     setProbe(null);
     setInventory(null);
+    setDatastoreInfo(null);
     setProbing(true);
     try {
       const response = await fetch("/api/targets/discover", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ target: form.target })
       });
+      if (response.status === 401) { setAuthed(false); return; }
       const data = await response.json();
       if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
       setProbe({ ok: data.ok, message: data.message });
@@ -175,6 +321,7 @@ function App() {
   function resetConnection() {
     setProbe(null);
     setInventory(null);
+    setDatastoreInfo(null);
   }
 
   async function saveAsTemplate() {
@@ -185,7 +332,7 @@ function App() {
     try {
       const response = await fetch("/api/templates", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ name: templateName.trim(), config })
       });
       if (!response.ok) throw new Error("保存失败");
@@ -207,10 +354,11 @@ function App() {
     setForm(loaded);
     setInventory(null);
     setProbe(null);
+    setDatastoreInfo(null);
   }
 
   async function deleteTemplate(name) {
-    await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE" });
+    await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE", headers: authHeaders() });
     await loadTemplates();
   }
 
@@ -232,6 +380,18 @@ function App() {
           <span>历史任务</span>
           <strong>{jobs.length}</strong>
         </div>
+        {datastoreInfo && (
+          <div className="metric datastoreMetric">
+            <span><HardDrive size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />Datastore</span>
+            <div className="datastoreInfo">
+              <small>{datastoreInfo.name}</small>
+              <div className="datastoreBar">
+                <div className="datastoreFill" style={{ width: `${100 - datastoreInfo.freePercent}%` }} />
+              </div>
+              <small>{datastoreInfo.freeSpace} 可用 / {datastoreInfo.capacity}</small>
+            </div>
+          </div>
+        )}
         <nav className="jobNav">
           {jobs.map((job) => (
             <button
@@ -339,11 +499,9 @@ function App() {
                   onChange={(value) => updateNested(setForm, ["target", "inventoryPath"], value)}
                   disabled={form.target.platform === "esxi"}
                 />
-                <ResourceSelect
-                  label="Datastore"
+                <DatastoreSelect
                   value={form.target.datastore}
-                  options={inventory.datastores}
-                  valueKey="name"
+                  datastores={inventory.datastores ?? []}
                   onChange={(value) => updateNested(setForm, ["target", "datastore"], value)}
                 />
                 <ResourceSelect
@@ -447,6 +605,27 @@ function App() {
               并发数控制同时运行的 ovftool 进程数量。建议根据 ESXi 主机性能和网络带宽设置，通常 3-5 较合适。
             </div>
 
+            {conflicts.length > 0 && (
+              <div className="alert alertWarn">
+                <AlertTriangle size={16} />
+                <div>
+                  <strong>以下 VM 名称已存在：</strong>
+                  {conflicts.map((name) => <code key={name}>{name}</code>).reduce((acc, el) => acc === null ? [el] : [...acc, "、", el], null)}
+                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                    <button type="button" className="secondaryAction" onClick={() => setConflicts([])}>返回修改</button>
+                    <button type="button" className="primaryAction" style={{ fontSize: 13, minHeight: 34 }} onClick={forceSubmit}>仍然部署</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {warnings.length > 0 && (
+              <div className="alert alertWarn">
+                <AlertTriangle size={16} />
+                <div>{warnings.map((w, i) => <div key={i}>{w}</div>)}</div>
+              </div>
+            )}
+
             {error && <div className="alert"><ShieldAlert size={16} />{error}</div>}
 
             <button className="primaryAction" type="submit" disabled={submitting}>
@@ -509,6 +688,32 @@ function ResourceSelect({ label, value, options, valueKey = "id", render = (item
       </select>
     </div>
   );
+}
+
+function DatastoreSelect({ value, datastores, onChange }) {
+  return (
+    <div className="field">
+      <label><HardDrive size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />Datastore</label>
+      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={!datastores.length}>
+        {!datastores.length && <option value="">无可用选项</option>}
+        {datastores.map((ds) => {
+          const info = ds.freeSpace > 0 ? ` (${formatBytes(ds.freeSpace)} 可用)` : "";
+          return (
+            <option key={ds.id} value={ds.name}>
+              {ds.name}{info}
+            </option>
+          );
+        })}
+      </select>
+    </div>
+  );
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
 function Repeater({ icon, title, rows, columns, selectOptions = {}, onChange, emptyRow, readOnly = false, emptyMessage = "" }) {

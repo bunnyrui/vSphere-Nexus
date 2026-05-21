@@ -2,11 +2,61 @@ const VIM_NS = "urn:vim25";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
+const sessionCache = new Map();
+
+function sessionKey(target) {
+  return `${target.host}|${target.username}`;
+}
+
+function getCachedSession(target) {
+  const key = sessionKey(target);
+  const entry = sessionCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > 10 * 60 * 1000) {
+    sessionCache.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function setCachedSession(target, cookie, serviceContent) {
+  sessionCache.set(sessionKey(target), {
+    cookie,
+    serviceContent,
+    createdAt: Date.now()
+  });
+}
+
 export async function discoverVsphere(target) {
-  const service = await retrieveServiceContent(target);
-  const cookie = await login(target, service.sessionManager);
-  const objects = await retrieveInventory(target, cookie, service.rootFolder, service.propertyCollector);
+  const cached = getCachedSession(target);
+  let serviceContent;
+  let cookie;
+
+  if (cached) {
+    serviceContent = cached.serviceContent;
+    cookie = cached.cookie;
+  } else {
+    serviceContent = await retrieveServiceContent(target);
+    cookie = await login(target, serviceContent.sessionManager);
+    setCachedSession(target, cookie, serviceContent);
+  }
+
+  const objects = await retrieveInventory(target, cookie, serviceContent.rootFolder, serviceContent.propertyCollector);
   return normalizeInventory(target, objects);
+}
+
+export async function checkVmNameConflicts(target, vmNames, folder) {
+  try {
+    const inventory = await discoverVsphere(target);
+    const existingNames = new Set(
+      (inventory.inventoryItems ?? [])
+        .filter((item) => item.kind === "VM")
+        .map((item) => item.name)
+    );
+    return vmNames.filter((name) => existingNames.has(name));
+  } catch {
+    return [];
+  }
 }
 
 async function retrieveServiceContent(target) {
@@ -49,10 +99,10 @@ async function retrieveInventory(target, cookie, rootFolder, propertyCollector) 
         <propSet><type>ClusterComputeResource</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>host</pathSet><pathSet>resourcePool</pathSet><pathSet>datastore</pathSet><pathSet>network</pathSet></propSet>
         <propSet><type>HostSystem</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>datastore</pathSet><pathSet>network</pathSet></propSet>
         <propSet><type>ResourcePool</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>owner</pathSet><pathSet>resourcePool</pathSet></propSet>
-        <propSet><type>Datastore</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
+        <propSet><type>Datastore</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.type</pathSet></propSet>
         <propSet><type>Network</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
         <propSet><type>DistributedVirtualPortgroup</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
-        <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet></propSet>
+        <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet><pathSet>summary.storage.committed</pathSet></propSet>
         <objectSet>
           ${ref("obj", rootFolder)}
           <skip>false</skip>
@@ -132,7 +182,17 @@ async function soap(host, body, cookie = "") {
 function normalizeInventory(target, objects) {
   const byId = new Map(objects.map((object) => [object.id, object]));
   const datacenters = objects.filter((object) => object.type === "Datacenter").map(toOption);
-  const datastores = uniqueOptions(objects.filter((object) => object.type === "Datastore").map(toOption));
+  const datastores = uniqueOptions(objects.filter((object) => object.type === "Datastore").map((object) => {
+    const capacity = parseNumber(object.props["summary.capacity"]?.[0]);
+    const freeSpace = parseNumber(object.props["summary.freeSpace"]?.[0]);
+    return {
+      id: object.id,
+      name: object.props.name?.[0] ?? object.id,
+      capacity,
+      freeSpace,
+      type: object.props["summary.type"]?.[0] ?? ""
+    };
+  }));
   const networks = uniqueOptions(objects.filter((object) => object.type === "Network" || object.type === "DistributedVirtualPortgroup").map(toOption));
   const hosts = objects.filter((object) => object.type === "HostSystem").map((object) => {
     const compute = byId.get(object.props.parent?.[0]?.id);
@@ -179,6 +239,7 @@ function normalizeInventory(target, objects) {
     const datacenter = findDatacenter(objects, object);
     const folderParts = folderPathParts(objects, object.props.parent?.[0]?.id, datacenter);
     const name = object.props.name?.[0] ?? object.id;
+    const storageCommitted = parseNumber(object.props["summary.storage.committed"]?.[0]);
     return {
       id: object.id,
       name,
@@ -189,7 +250,8 @@ function normalizeInventory(target, objects) {
         .map((networkRef) => byId.get(networkRef.id))
         .filter(Boolean)
         .map(toOption))
-        .map((network) => network.name)
+        .map((network) => network.name),
+      storageCommitted
     };
   }).filter((item) => item.inventoryPath);
 
@@ -204,6 +266,11 @@ function normalizeInventory(target, objects) {
     folders,
     inventoryItems
   };
+}
+
+function parseNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function folderPathParts(objects, folderId, datacenter) {
