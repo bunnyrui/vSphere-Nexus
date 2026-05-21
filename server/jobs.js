@@ -107,10 +107,7 @@ export async function createJob(payload) {
   };
 
   jobs.set(id, job);
-  const safePayload = {
-    ...payload,
-    target: { ...payload.target }
-  };
+  const safePayload = JSON.parse(JSON.stringify(payload));
   payloads.set(id, safePayload);
   scheduleSave();
   runJob(job, safePayload);
@@ -122,6 +119,7 @@ export function retryFailed(id) {
   const payload = payloads.get(id);
   if (!job || !payload) return null;
   if (job.status !== "failed") return null;
+  if (controllers.has(id)) return null;
 
   const failedIndices = (job.vmResults ?? [])
     .map((r, i) => (r.status === "failed" ? i : -1))
@@ -156,114 +154,132 @@ function appendLog(job, stream, message) {
 }
 
 async function runJob(job, payload) {
-  const controller = new AbortController();
-  controllers.set(job.id, controller);
+  try {
+    const controller = new AbortController();
+    controllers.set(job.id, controller);
 
-  job.status = "running";
-  job.startedAt = new Date().toISOString();
-  const concurrency = job.concurrency || 1;
-  appendLog(job, "system", `开始部署 ${payload.vms.length} 台虚拟机 (并发数: ${concurrency})`);
+    job.status = "running";
+    job.startedAt = new Date().toISOString();
+    const concurrency = job.concurrency || 1;
+    appendLog(job, "system", `开始部署 ${payload.vms.length} 台虚拟机 (并发数: ${concurrency})`);
 
-  const pendingIndices = payload.vms
-    .map((_, i) => i)
-    .filter((i) => job.vmResults[i].status === "pending");
+    const pendingIndices = payload.vms
+      .map((_, i) => i)
+      .filter((i) => job.vmResults[i].status === "pending");
 
-  await runWithConcurrency(pendingIndices, concurrency, async (index) => {
-    if (job.status === "cancelled") return;
-    if (job.vmResults[index].status !== "pending") return;
+    await runWithConcurrency(pendingIndices, concurrency, async (index) => {
+      if (job.status === "cancelled") return;
+      if (job.vmResults[index].status !== "pending") return;
 
-    const vm = payload.vms[index];
-    const maskedArgs = buildOvfToolArgs(payload, vm, index, { masked: true });
-    const rawArgs = buildOvfToolArgs(payload, vm, index, { masked: false });
-    const vmName = renderTemplate(vm.name || `VM-${index + 1}`, vm, index);
+      const vm = payload.vms[index];
+      const maskedArgs = buildOvfToolArgs(payload, vm, index, { masked: true });
+      const rawArgs = buildOvfToolArgs(payload, vm, index, { masked: false });
+      const vmName = renderTemplate(vm.name || `VM-${index + 1}`, vm, index);
 
-    appendLog(job, "system", `准备部署 ${vmName}`);
-    appendLog(job, "command", stringifyCommand(maskedArgs));
+      appendLog(job, "system", `准备部署 ${vmName}`);
+      appendLog(job, "command", stringifyCommand(maskedArgs));
 
-    if (payload.dryRun) {
-      job.progress.completed += 1;
-      job.vmResults[index].status = "succeeded";
-      appendLog(job, "system", `${vmName} 干跑完成，未执行 ovftool`);
-      return;
-    }
+      if (payload.dryRun) {
+        job.progress.completed += 1;
+        job.vmResults[index].status = "succeeded";
+        appendLog(job, "system", `${vmName} 干跑完成，未执行 ovftool`);
+        return;
+      }
 
-    const result = await runOvfTool(rawArgs, {
-      signal: controller.signal,
-      onLine: (stream, line) => appendLog(job, stream, line)
+      const result = await runOvfTool(rawArgs, {
+        signal: controller.signal,
+        onLine: (stream, line) => appendLog(job, stream, line)
+      });
+
+      if (result.code === 0) {
+        job.progress.completed += 1;
+        job.vmResults[index].status = "succeeded";
+        appendLog(job, "system", `${vmName} 部署完成`);
+      } else if (job.status !== "cancelled") {
+        job.progress.failed += 1;
+        job.vmResults[index].status = "failed";
+        appendLog(job, "stderr", `${vmName} 部署失败，退出码 ${result.code}`);
+      }
     });
 
-    if (result.code === 0) {
-      job.progress.completed += 1;
-      job.vmResults[index].status = "succeeded";
-      appendLog(job, "system", `${vmName} 部署完成`);
-    } else if (job.status !== "cancelled") {
-      job.progress.failed += 1;
-      job.vmResults[index].status = "failed";
-      appendLog(job, "stderr", `${vmName} 部署失败，退出码 ${result.code}`);
+    if (job.status !== "cancelled") {
+      job.status = job.progress.failed > 0 ? "failed" : "succeeded";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "system", job.status === "succeeded" ? "全部任务完成" : "任务完成，但存在失败项");
     }
-  });
-
-  if (job.status !== "cancelled") {
-    job.status = job.progress.failed > 0 ? "failed" : "succeeded";
-    job.finishedAt = new Date().toISOString();
-    appendLog(job, "system", job.status === "succeeded" ? "全部任务完成" : "任务完成，但存在失败项");
+  } catch (err) {
+    if (job.status !== "cancelled") {
+      job.status = "failed";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "stderr", `任务异常: ${err.message}`);
+    }
+    console.error(`runJob ${job.id} error:`, err);
+  } finally {
+    controllers.delete(job.id);
+    scheduleSave();
   }
-
-  controllers.delete(job.id);
-  scheduleSave();
 }
 
 async function runRetryJob(job, payload, failedIndices) {
-  const controller = new AbortController();
-  controllers.set(job.id, controller);
+  try {
+    const controller = new AbortController();
+    controllers.set(job.id, controller);
 
-  job.status = "running";
-  const concurrency = job.concurrency || 1;
-  appendLog(job, "system", `开始重试 ${failedIndices.length} 台虚拟机 (并发数: ${concurrency})`);
+    job.status = "running";
+    const concurrency = job.concurrency || 1;
+    appendLog(job, "system", `开始重试 ${failedIndices.length} 台虚拟机 (并发数: ${concurrency})`);
 
-  await runWithConcurrency(failedIndices, concurrency, async (index) => {
-    if (job.status === "cancelled") return;
-    if (job.vmResults[index].status !== "pending") return;
+    await runWithConcurrency(failedIndices, concurrency, async (index) => {
+      if (job.status === "cancelled") return;
+      if (job.vmResults[index].status !== "pending") return;
 
-    const vm = payload.vms[index];
-    const rawArgs = buildOvfToolArgs(payload, vm, index, { masked: false });
-    const maskedArgs = buildOvfToolArgs(payload, vm, index, { masked: true });
-    const vmName = job.vmResults[index].name;
+      const vm = payload.vms[index];
+      const rawArgs = buildOvfToolArgs(payload, vm, index, { masked: false });
+      const maskedArgs = buildOvfToolArgs(payload, vm, index, { masked: true });
+      const vmName = job.vmResults[index].name;
 
-    appendLog(job, "system", `准备重试部署 ${vmName}`);
-    appendLog(job, "command", stringifyCommand(maskedArgs));
+      appendLog(job, "system", `准备重试部署 ${vmName}`);
+      appendLog(job, "command", stringifyCommand(maskedArgs));
 
-    if (job.dryRun) {
-      job.progress.completed += 1;
-      job.vmResults[index].status = "succeeded";
-      appendLog(job, "system", `${vmName} 干跑完成`);
-      return;
-    }
+      if (job.dryRun) {
+        job.progress.completed += 1;
+        job.vmResults[index].status = "succeeded";
+        appendLog(job, "system", `${vmName} 干跑完成`);
+        return;
+      }
 
-    const result = await runOvfTool(rawArgs, {
-      signal: controller.signal,
-      onLine: (stream, line) => appendLog(job, stream, line)
+      const result = await runOvfTool(rawArgs, {
+        signal: controller.signal,
+        onLine: (stream, line) => appendLog(job, stream, line)
+      });
+
+      if (result.code === 0) {
+        job.progress.completed += 1;
+        job.vmResults[index].status = "succeeded";
+        appendLog(job, "system", `${vmName} 重试部署完成`);
+      } else if (job.status !== "cancelled") {
+        job.progress.failed += 1;
+        job.vmResults[index].status = "failed";
+        appendLog(job, "stderr", `${vmName} 重试失败，退出码 ${result.code}`);
+      }
     });
 
-    if (result.code === 0) {
-      job.progress.completed += 1;
-      job.vmResults[index].status = "succeeded";
-      appendLog(job, "system", `${vmName} 重试部署完成`);
-    } else if (job.status !== "cancelled") {
-      job.progress.failed += 1;
-      job.vmResults[index].status = "failed";
-      appendLog(job, "stderr", `${vmName} 重试失败，退出码 ${result.code}`);
+    if (job.status !== "cancelled") {
+      job.status = job.progress.failed > 0 ? "failed" : "succeeded";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "system", job.status === "succeeded" ? "重试全部成功" : "重试完成，但仍有失败项");
     }
-  });
-
-  if (job.status !== "cancelled") {
-    job.status = job.progress.failed > 0 ? "failed" : "succeeded";
-    job.finishedAt = new Date().toISOString();
-    appendLog(job, "system", job.status === "succeeded" ? "重试全部成功" : "重试完成，但仍有失败项");
+  } catch (err) {
+    if (job.status !== "cancelled") {
+      job.status = "failed";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "stderr", `重试异常: ${err.message}`);
+    }
+    console.error(`runRetryJob ${job.id} error:`, err);
+  } finally {
+    controllers.delete(job.id);
+    scheduleSave();
   }
-
-  controllers.delete(job.id);
-  scheduleSave();
 }
 
 async function runWithConcurrency(indices, concurrency, taskFn) {

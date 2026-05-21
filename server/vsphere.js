@@ -1,6 +1,8 @@
 const VIM_NS = "urn:vim25";
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+import { Agent } from "node:https";
+
+const insecureAgent = new Agent({ rejectUnauthorized: false });
 
 const sessionCache = new Map();
 
@@ -169,7 +171,8 @@ async function soap(host, body, cookie = "") {
       SOAPAction: `"${VIM_NS}/8.0.3.0"`,
       ...(cookie ? { Cookie: cookie } : {})
     },
-    body
+    body,
+    agent: insecureAgent
   });
   const text = await response.text();
   const setCookie = response.headers.get("set-cookie") ?? "";

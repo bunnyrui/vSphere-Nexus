@@ -1,7 +1,6 @@
 import cors from "cors";
 import crypto from "node:crypto";
 import express from "express";
-import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore } from "./jobs.js";
@@ -16,17 +15,42 @@ const authUser = process.env.MASSOVA_USER || "";
 const authPass = process.env.MASSOVA_PASS || "";
 const authEnabled = Boolean(authUser && authPass);
 const sessions = new Map();
+const SESSION_MAX_AGE = 24 * 60 * 60 * 1000;
 
-app.use(cors());
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions) {
+    if (now - session.createdAt > SESSION_MAX_AGE) sessions.delete(token);
+  }
+}, 60 * 60 * 1000);
+
+app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
 app.use(express.json({ limit: "1mb" }));
 
 const publicPaths = new Set(["/auth/login", "/auth/status", "/health"]);
 
+function extractToken(req) {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
+  return req.query?.token || "";
+}
+
+function isValidToken(token) {
+  if (!token) return false;
+  const session = sessions.get(token);
+  if (!session) return false;
+  if (Date.now() - session.createdAt > SESSION_MAX_AGE) {
+    sessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
 if (authEnabled) {
   app.use("/api", (req, res, next) => {
     if (publicPaths.has(req.path)) return next();
-    const token = req.headers.authorization?.replace("Bearer ", "");
-    if (!token || !sessions.has(token)) {
+    const token = extractToken(req);
+    if (!isValidToken(token)) {
       return res.status(401).json({ error: "未认证" });
     }
     next();
@@ -53,8 +77,8 @@ app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     authEnabled,
-    ovftoolPath: resolvedPath !== "ovftool" ? resolvedPath : null,
-    ovftoolAvailable: resolvedPath !== "ovftool"
+    ovftoolPath: resolvedPath,
+    ovftoolAvailable: true
   });
 });
 
@@ -75,9 +99,10 @@ app.get("/api/jobs/:id/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  let lastLogIndex = 0;
+  let lastLogIndex = job.logs.length;
 
   const interval = setInterval(() => {
     const current = getJob(req.params.id);
@@ -286,11 +311,7 @@ async function start() {
   const ovftoolPath = await resolveOvfToolPath();
   app.listen(port, () => {
     console.log(`MassOVA server listening on http://localhost:${port}${authEnabled ? " (auth enabled)" : ""}`);
-    if (ovftoolPath !== "ovftool") {
-      console.log(`ovftool: ${ovftoolPath}`);
-    } else {
-      console.log("ovftool: 未找到内置或系统 ovftool，请安装或设置 OVFTOOL_PATH");
-    }
+    console.log(`ovftool: ${ovftoolPath}`);
   });
 }
 
@@ -312,7 +333,6 @@ function normalizeDeployment(body) {
 function validateDeployment(body) {
   const errors = [];
   if (!body || typeof body !== "object") errors.push("请求体不能为空");
-  if (body?.sourceType && body.sourceType !== "inventory") errors.push("只允许从 vSphere 模板批量部署");
   if (!body?.sourceInventoryPath) errors.push("需要选择 vSphere 模板");
   errors.push(...validateTarget(normalizeTarget(body?.target ?? {})));
   if (!body?.target?.datastore) errors.push("需要填写 datastore");
@@ -378,8 +398,8 @@ function sanitizeProbeOutput(output) {
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return "0 B";
+  if (!bytes || bytes <= 0 || !Number.isFinite(bytes)) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }

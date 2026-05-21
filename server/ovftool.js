@@ -92,7 +92,7 @@ function encodeInventoryPath(path = "") {
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join("/");
-  return `${hasLeadingSlash ? "/" : "/"}${encoded}`;
+  return `${hasLeadingSlash ? "/" : ""}${encoded}`;
 }
 
 export function makeViUrl(target, includePassword = true) {

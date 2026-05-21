@@ -710,9 +710,9 @@ function DatastoreSelect({ value, datastores, onChange }) {
 }
 
 function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return "0 B";
+  if (!bytes || bytes <= 0 || !Number.isFinite(bytes)) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
@@ -853,7 +853,10 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
     }
 
     setSseLogs([]);
-    const eventSource = new EventSource(`/api/jobs/${job.id}/events`);
+    setSseStatus(null);
+    const token = localStorage.getItem("massova.token");
+    const url = `/api/jobs/${job.id}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+    const eventSource = new EventSource(url);
 
     eventSource.addEventListener("log", (event) => {
       setSseLogs((prev) => [...prev, JSON.parse(event.data)]);
@@ -865,7 +868,6 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
 
     eventSource.addEventListener("close", () => {
       eventSource.close();
-      onRefresh?.();
     });
 
     eventSource.onerror = () => {
@@ -881,7 +883,7 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
     const base = job?.logs ?? [];
     if (sseLogs.length === 0) return base;
     return [...base, ...sseLogs];
-  }, [job?.logs, sseLogs]);
+  }, [job?.logs?.length, sseLogs]);
 
   useEffect(() => {
     if (logBoxRef.current) {
@@ -901,7 +903,7 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
     a.href = url;
     a.download = `massova-${job.id}.log`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 200);
   }
 
   const completed = displayProgress?.completed ?? 0;
