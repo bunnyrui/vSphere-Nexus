@@ -230,11 +230,11 @@ export const JobsPage = () => {
           <div className="text-right pl-2">
              <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest mb-1">总体进度</p>
              <div className="flex items-center gap-3">
-               <span className="text-2xl font-black text-primary">{Math.round((activeJob?.progress.completed / activeJob?.progress.total) * 100)}%</span>
+               <span className="text-2xl font-black text-primary">{activeJob?.progress?.total > 0 ? Math.round((activeJob.progress.completed / activeJob.progress.total) * 100) : 0}%</span>
                <div className="w-32 h-2 bg-secondary rounded-full overflow-hidden">
                  <div 
                    className="h-full bg-primary transition-all duration-500" 
-                   style={{ width: `${(activeJob?.progress.completed / activeJob?.progress.total) * 100}%` }}
+                   style={{ width: `${activeJob?.progress?.total > 0 ? (activeJob.progress.completed / activeJob.progress.total) * 100 : 0}%` }}
                  />
                </div>
              </div>
