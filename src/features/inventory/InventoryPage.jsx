@@ -195,6 +195,14 @@ export const InventoryPage = () => {
   };
 
   const handleExport = () => {
+    const escapeCsvField = (value) => {
+      const str = String(value ?? '');
+      if (str.length === 0) return '""';
+      if (/^[=+\-@\r\n,"]/.test(str)) return "'" + str.replace(/"/g, '""') + '"';
+      if (/[",\r\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+      return str;
+    };
+
     const headers = ['名称', '操作系统', '状态', 'IP 地址', 'CPU', '内存(MB)', '存储(GB)'];
     const rows = vms.map(vm => [
       vm.name,
@@ -207,17 +215,19 @@ export const InventoryPage = () => {
     ]);
 
     const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.join(','))
+      headers.map(escapeCsvField).join(','),
+      ...rows.map(row => row.map(escapeCsvField).join(','))
     ].join('\n');
 
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
+    link.href = url;
     link.setAttribute('download', `MassOVA_Inventory_${new Date().toLocaleDateString()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const toggleSelectAll = () => {
