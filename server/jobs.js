@@ -239,7 +239,6 @@ export async function createDestroyJob(target, vmIds) {
 export async function createPowerControlJob(target, vmIds, action) {
   const uniqueVmIds = [...new Set(vmIds)];
   const id = nanoid(10);
-  const label = action === "on" ? "开机" : action === "reset" ? "重启" : "关机";
   const job = {
     id,
     type: "power",
@@ -484,13 +483,13 @@ async function runPowerControlJob(job, target, vmIds, action) {
     appendLog(job, "system", `开始批量${label} ${vmIds.length} 台虚拟机`);
 
     await powerControlVms(target, vmIds, action, {
-      onProgress: (vmId, status) => {
+      onProgress: (vmId, status, skipped) => {
         const idx = vmIds.indexOf(vmId);
         if (idx < 0) return;
         if (status === "succeeded") {
           job.progress.completed += 1;
           job.vmResults[idx].status = "succeeded";
-          appendLog(job, "system", `${vmId} ${label}完成`);
+          appendLog(job, "system", skipped ? `${vmId} 已是目标状态，跳过` : `${vmId} ${label}完成`);
         } else {
           job.progress.failed += 1;
           job.vmResults[idx].status = "failed";

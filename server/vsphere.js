@@ -189,7 +189,7 @@ export async function powerControlVms(target, vmIds, action, { onProgress } = {}
         const state = await getVmPowerState(target.host, cookie, vmId);
         if (state !== "poweredOn") {
           results.push({ id: vmId, status: "succeeded", skipped: true });
-          onProgress?.(vmId, "succeeded");
+          onProgress?.(vmId, "succeeded", true);
           continue;
         }
       }
@@ -197,7 +197,7 @@ export async function powerControlVms(target, vmIds, action, { onProgress } = {}
         const state = await getVmPowerState(target.host, cookie, vmId);
         if (state === "poweredOn") {
           results.push({ id: vmId, status: "succeeded", skipped: true });
-          onProgress?.(vmId, "succeeded");
+          onProgress?.(vmId, "succeeded", true);
           continue;
         }
       }
@@ -215,7 +215,7 @@ export async function powerControlVms(target, vmIds, action, { onProgress } = {}
     } catch (err) {
       results.push({ id: vmId, status: "failed", error: err.message });
     }
-    onProgress?.(vmId, results.at(-1).status);
+    onProgress?.(vmId, results.at(-1).status, false);
   }
 
   return results;

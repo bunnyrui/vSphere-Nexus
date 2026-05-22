@@ -527,7 +527,8 @@ function App() {
           ) : activeTab === "overview" ? (
             <OverviewTab
               inventory={inventory} form={form} error={error} setError={setError}
-              onRefresh={probeTarget}
+              setAuthed={setAuthed} activeJobId={activeJobId} setActiveJobId={setActiveJobId}
+              onRefresh={probeTarget} onRefreshJobs={refreshJobs}
             />
           ) : (
             <CleanupTab
@@ -714,7 +715,7 @@ function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, o
   );
 }
 
-function OverviewTab({ inventory, form, error, setError, onRefresh }) {
+function OverviewTab({ inventory, form, error, setError, setAuthed, activeJobId, setActiveJobId, onRefresh, onRefreshJobs }) {
   const [sortKey, setSortKey] = useState("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [searchText, setSearchText] = useState("");
@@ -722,6 +723,8 @@ function OverviewTab({ inventory, form, error, setError, onRefresh }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [powering, setPowering] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => { setSelectedIds(new Set()); }, [inventory]);
 
   if (!inventory) {
     return (
@@ -797,10 +800,12 @@ function OverviewTab({ inventory, form, error, setError, onRefresh }) {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ target: form.target, vmIds: ids, action })
       });
-      if (response.status === 401) return;
+      if (response.status === 401) { setAuthed(false); return; }
       const data = await response.json();
       if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
+      if (data.job?.id) setActiveJobId(data.job.id);
       setSelectedIds(new Set());
+      await onRefreshJobs();
     } catch (err) {
       setError(err.message);
     } finally {
