@@ -10,6 +10,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useAuthStore } from '../../store/useAuthStore';
 
 export const VMConsole = ({ vm, onClose }) => {
   const containerRef = useRef(null);
@@ -52,7 +53,7 @@ export const VMConsole = ({ vm, onClose }) => {
           signal: controller.signal,
           headers: { 
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('nexus_token')}`
+            'Authorization': `Bearer ${useAuthStore.getState().token}`
           },
           body: JSON.stringify({})
         });
@@ -68,7 +69,7 @@ export const VMConsole = ({ vm, onClose }) => {
         if (!isMounted) return;
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const nexusToken = localStorage.getItem('nexus_token');
+        const nexusToken = useAuthStore.getState().token;
         const params = new URLSearchParams({
           host: ticketData.host,
           port: ticketData.port,
