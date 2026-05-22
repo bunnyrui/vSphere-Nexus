@@ -460,6 +460,8 @@ app.post("/api/vms/:id/rename", async (req, res) => {
 app.post("/api/vms/:id/reconfigure", async (req, res) => {
   hydrateTargetFromSession(req);
   const { cpu, memory } = req.body;
+  if (cpu !== undefined && (cpu < 1 || cpu > 128)) return res.status(400).json({ error: "CPU 核心数应在 1-128 之间" });
+  if (memory !== undefined && (memory < 4 || memory > 1048576)) return res.status(400).json({ error: "内存应在 4-1048576 MB 之间" });
   try {
     const task = await new VmService(req.body.target).reconfigureVm(req.params.id, {
       numCPUs: cpu,
