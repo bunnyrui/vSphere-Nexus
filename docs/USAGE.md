@@ -17,7 +17,7 @@
 
 ## 概述
 
-MassOVA 是一个基于 Web 的 vSphere 虚拟机批量管理工具。它通过 `ovftool` 和 vSphere SOAP API 与 ESXi/vCenter 交互，提供以下功能：
+vSphere Nexus 是一个基于 Web 的 vSphere 虚拟机批量管理工具。它通过 `ovftool` 和 vSphere SOAP API 与 ESXi/vCenter 交互，提供以下功能：
 
 - **批量部署**：从 vSphere 模板批量创建虚拟机，支持并发执行
 - **虚拟机概览**：查看所有 VM 的电源状态、配置、IP、操作系统等信息
@@ -36,7 +36,7 @@ MassOVA 是一个基于 Web 的 vSphere 虚拟机批量管理工具。它通过 
 
 ## 快速开始
 
-1. 打开 MassOVA Web 界面（默认 http://localhost:4173）
+1. 打开 vSphere Nexus Web 界面（默认 http://localhost:4173）
 2. 如果启用了认证，先输入用户名和密码登录
 3. 在顶部连接面板填写 vSphere 地址、用户名、密码，点击 **"连接"**
 4. 通过顶部 Tab 切换功能：
@@ -319,7 +319,7 @@ MassOVA 是一个基于 Web 的 vSphere 虚拟机批量管理工具。它通过 
 
 ## 认证登录
 
-如果服务端配置了 `MASSOVA_USER` 和 `MASSOVA_PASS` 环境变量，访问 Web 界面时会显示登录页面。
+如果服务端配置了 `NEXUS_USER` 和 `NEXUS_PASS` 环境变量，访问 Web 界面时会显示登录页面。
 
 | 特性 | 说明 |
 |------|------|
@@ -351,7 +351,7 @@ MassOVA 是一个基于 Web 的 vSphere 虚拟机批量管理工具。它通过 
 
 目标环境中已有同名 VM。解决方式：
 1. 在 vSphere Client 中删除或重命名冲突的 VM
-2. 在 MassOVA 中修改 VM 名称
+2. 在 vSphere Nexus 中修改 VM 名称
 
 ### 连接成功但看不到模板
 

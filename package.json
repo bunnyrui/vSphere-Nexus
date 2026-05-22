@@ -1,6 +1,7 @@
 {
-  "name": "massova",
-  "version": "0.1.0",
+  "name": "vsphere-nexus",
+  "version": "1.0.0",
+  "description": "vSphere Nexus - Professional Virtualization Management Platform",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,16 +12,24 @@
     "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {
+    "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "nanoid": "^5.0.9",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.15.1",
+    "tailwind-merge": "^3.6.0",
+    "ws": "^8.20.1",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.5.0",
     "concurrently": "^9.2.1",
     "lucide-react": "^0.468.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^3.4.19",
     "vite": "^7.2.4"
   }
 }

@@ -1,10 +1,12 @@
 node_modules/
 dist/
 data/
-bin/darwin/ovftool
-bin/linux/ovftool
-bin/win32/ovftool.exe
-bin/win32/*.dll
+bin/darwin/*
+!bin/darwin/.gitkeep
+bin/linux/*
+!bin/linux/.gitkeep
+bin/win32/*
+!bin/win32/.gitkeep
 .DS_Store
 *.log
 .env

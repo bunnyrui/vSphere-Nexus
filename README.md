@@ -1,6 +1,6 @@
-# MassOVA
+# vSphere Nexus
 
-MassOVA 是一个用于从 ESXi 或 vCenter 模板批量部署虚拟机的 Web 工具。
+vSphere Nexus 是一个用于从 ESXi 或 vCenter 模板批量部署虚拟机的 Web 工具。
 
 ## 功能
 
@@ -59,8 +59,8 @@ OVFTOOL_PATH=/path/to/ovftool npm start
 | `PORT` | `4173` | 服务端口 |
 | `NODE_ENV` | - | `production` 启用静态托管 |
 | `OVFTOOL_PATH` | 自动检测 | ovftool 路径 |
-| `MASSOVA_USER` | - | 认证用户名 |
-| `MASSOVA_PASS` | - | 认证密码 |
+| `NEXUS_USER` | - | 认证用户名 |
+| `NEXUS_PASS` | - | 认证密码 |
 
 ## License
 

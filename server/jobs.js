@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { buildOvfToolArgs, renderTemplate, runOvfTool, stringifyCommand } from "./ovftool.js";
-import { powerOffAndDestroy, powerControlVms } from "./vsphere.js";
+import { VmService } from "./services/vmService.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(__dirname, "..", "data");
@@ -145,6 +145,17 @@ export function cancelJob(id) {
   return true;
 }
 
+export function deleteJob(id) {
+  if (jobs.has(id)) {
+    jobs.delete(id);
+    payloads.delete(id);
+    controllers.delete(id);
+    scheduleSave();
+    return true;
+  }
+  return false;
+}
+
 export async function createJob(payload) {
   const id = nanoid(10);
   const job = {
@@ -202,7 +213,7 @@ export function retryFailed(id) {
   return job;
 }
 
-export async function createDestroyJob(target, vmIds) {
+export async function createDestroyJob(target, vmIds, incomingPayload = {}) {
   const uniqueVmIds = [...new Set(vmIds)];
   const id = nanoid(10);
   const job = {
@@ -225,13 +236,13 @@ export async function createDestroyJob(target, vmIds) {
   };
 
   jobs.set(id, job);
-  payloads.set(id, { type: "destroy", target, vmIds: uniqueVmIds });
+  payloads.set(id, { ...incomingPayload, type: "destroy", target, vmIds: uniqueVmIds });
   scheduleSave();
   runDestroyJob(job, target, uniqueVmIds).catch((err) => console.error(`runDestroyJob ${job.id} unhandled:`, err));
   return job;
 }
 
-export async function createPowerControlJob(target, vmIds, action) {
+export async function createPowerControlJob(target, vmIds, action, incomingPayload = {}) {
   const uniqueVmIds = [...new Set(vmIds)];
   const id = nanoid(10);
   const job = {
@@ -254,7 +265,7 @@ export async function createPowerControlJob(target, vmIds, action) {
   };
 
   jobs.set(id, job);
-  payloads.set(id, { type: "power", target, vmIds: uniqueVmIds, action });
+  payloads.set(id, { ...incomingPayload, type: "power", target, vmIds: uniqueVmIds, action });
   scheduleSave();
   runPowerControlJob(job, target, uniqueVmIds, action).catch((err) => console.error(`runPowerControlJob ${job.id} unhandled:`, err));
   return job;
@@ -411,24 +422,30 @@ async function runDestroyJob(job, target, vmIds) {
   try {
     job.status = "running";
     job.startedAt = new Date().toISOString();
-    appendLog(job, "system", `开始销毁 ${vmIds.length} 台虚拟机`);
+    appendLog(job, "system", `开始批量销毁 ${vmIds.length} 台虚拟机`);
 
-    await powerOffAndDestroy(target, vmIds, {
-      onProgress: (vmId, status) => {
-        const idx = vmIds.indexOf(vmId);
-        if (idx < 0) return;
-        if (status === "succeeded") {
-          job.progress.completed += 1;
-          job.vmResults[idx].status = "succeeded";
-          appendLog(job, "system", `${vmId} 已关机并删除`);
-        } else {
-          job.progress.failed += 1;
-          job.vmResults[idx].status = "failed";
-          appendLog(job, "stderr", `${vmId} 销毁失败`);
-        }
-        scheduleSave();
+    const service = new VmService(target);
+
+    for (const vmId of vmIds) {
+      if (job.status === "cancelled") break;
+      const idx = vmIds.indexOf(vmId);
+      
+      try {
+        appendLog(job, "system", `正在销毁: ${vmId}...`);
+        // First try to power off if it's on (simple best effort)
+        try { await service.powerOff(vmId); } catch (e) {}
+        
+        await service.destroy(vmId);
+        job.progress.completed += 1;
+        job.vmResults[idx].status = "succeeded";
+        appendLog(job, "system", `${vmId} 已删除`);
+      } catch (err) {
+        job.progress.failed += 1;
+        job.vmResults[idx].status = "failed";
+        appendLog(job, "stderr", `${vmId} 销毁失败: ${err.message}`);
       }
-    });
+      scheduleSave();
+    }
 
     if (job.status !== "cancelled") {
       job.status = job.progress.failed > 0 ? "failed" : "succeeded";
@@ -477,22 +494,29 @@ async function runPowerControlJob(job, target, vmIds, action) {
     job.startedAt = new Date().toISOString();
     appendLog(job, "system", `开始批量${label} ${vmIds.length} 台虚拟机`);
 
-    await powerControlVms(target, vmIds, action, {
-      onProgress: (vmId, status, skipped) => {
-        const idx = vmIds.indexOf(vmId);
-        if (idx < 0) return;
-        if (status === "succeeded") {
-          job.progress.completed += 1;
-          job.vmResults[idx].status = "succeeded";
-          appendLog(job, "system", skipped ? `${vmId} 已是目标状态，跳过` : `${vmId} ${label}完成`);
-        } else {
-          job.progress.failed += 1;
-          job.vmResults[idx].status = "failed";
-          appendLog(job, "stderr", `${vmId} ${label}失败`);
-        }
-        scheduleSave();
+    const service = new VmService(target);
+
+    for (const vmId of vmIds) {
+      if (job.status === "cancelled") break;
+      const idx = vmIds.indexOf(vmId);
+      
+      try {
+        appendLog(job, "system", `正在${label}: ${vmId}...`);
+        
+        if (action === "on") await service.powerOn(vmId);
+        else if (action === "reset") await service.reset(vmId);
+        else await service.powerOff(vmId);
+
+        job.progress.completed += 1;
+        job.vmResults[idx].status = "succeeded";
+        appendLog(job, "system", `${vmId} ${label}成功`);
+      } catch (err) {
+        job.progress.failed += 1;
+        job.vmResults[idx].status = "failed";
+        appendLog(job, "stderr", `${vmId} ${label}失败: ${err.message}`);
       }
-    });
+      scheduleSave();
+    }
 
     if (job.status !== "cancelled") {
       job.status = job.progress.failed > 0 ? "failed" : "succeeded";
@@ -506,6 +530,82 @@ async function runPowerControlJob(job, target, vmIds, action) {
       appendLog(job, "stderr", `批量${label}异常: ${err.message}`);
     }
     console.error(`runPowerControlJob ${job.id} error:`, err);
+  } finally {
+    controllers.delete(job.id);
+    scheduleSave();
+  }
+}
+
+export async function createSnapshotJob(target, vmIds, name, description, memory, incomingPayload = {}) {
+  const uniqueVmIds = [...new Set(vmIds)];
+  const id = nanoid(10);
+  const job = {
+    id,
+    type: "snapshot",
+    status: "queued",
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    dryRun: false,
+    concurrency: 1,
+    progress: { total: uniqueVmIds.length, completed: 0, failed: 0 },
+    commands: [],
+    logs: [],
+    vmResults: uniqueVmIds.map((vmId, index) => ({
+      index,
+      name: vmId,
+      status: "pending"
+    }))
+  };
+
+  jobs.set(id, job);
+  payloads.set(id, { ...incomingPayload, type: "snapshot", target, vmIds: uniqueVmIds, snapshotName: name });
+  scheduleSave();
+  runSnapshotJob(job, target, uniqueVmIds, name, description, memory).catch((err) => console.error(`runSnapshotJob ${job.id} unhandled:`, err));
+  return job;
+}
+
+async function runSnapshotJob(job, target, vmIds, name, description, memory) {
+  const controller = new AbortController();
+  controllers.set(job.id, controller);
+
+  try {
+    job.status = "running";
+    job.startedAt = new Date().toISOString();
+    appendLog(job, "system", `开始对 ${vmIds.length} 台虚拟机拍摄快照: ${name}`);
+
+    const service = new VmService(target);
+
+    for (const vmId of vmIds) {
+      if (job.status === "cancelled") break;
+      const idx = vmIds.indexOf(vmId);
+      
+      try {
+        appendLog(job, "system", `正在拍摄快照: ${vmId}...`);
+        await service.createSnapshot(vmId, name, description, memory);
+        job.progress.completed += 1;
+        job.vmResults[idx].status = "succeeded";
+        appendLog(job, "system", `${vmId} 快照拍摄完成`);
+      } catch (err) {
+        job.progress.failed += 1;
+        job.vmResults[idx].status = "failed";
+        appendLog(job, "stderr", `${vmId} 快照拍摄失败: ${err.message}`);
+      }
+      scheduleSave();
+    }
+
+    if (job.status !== "cancelled") {
+      job.status = job.progress.failed > 0 ? "failed" : "succeeded";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "system", job.status === "succeeded" ? "全部快照任务完成" : "快照任务完成，但存在失败项");
+    }
+  } catch (err) {
+    if (job.status !== "cancelled") {
+      job.status = "failed";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "stderr", `批量快照异常: ${err.message}`);
+    }
+    console.error(`runSnapshotJob ${job.id} error:`, err);
   } finally {
     controllers.delete(job.id);
     scheduleSave();

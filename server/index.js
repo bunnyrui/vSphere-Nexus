@@ -4,22 +4,164 @@ import express from "express";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, constants as fsConstants } from "node:fs/promises";
-import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob } from "./jobs.js";
+import { WebSocketServer, WebSocket } from "ws";
+import tls from "node:tls";
+import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob, createSnapshotJob, deleteJob } from "./jobs.js";
 import { resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
-import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
+import { VmService } from "./services/vmService.js";
+import http from "node:http";
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
+const server = http.createServer(app);
+
+// --- WebSocket Proxy for WebMKS ---
+const wss = new WebSocketServer({ 
+  noServer: true,
+  handleProtocols: (protocols) => {
+    // Support 'binary' protocol which is required by WMKS
+    if (protocols.has("binary")) return "binary";
+    return Array.from(protocols)[0];
+  }
+});
+
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const { pathname } = url;
+
+  if (pathname !== "/api/console-proxy") {
+    console.warn(`[UPGRADE] Rejected upgrade for ${pathname}`);
+    socket.destroy();
+    return;
+  }
+
+  const targetHost = url.searchParams.get("host");
+  const targetPort = parseInt(url.searchParams.get("port") || "443");
+  const ticket = url.searchParams.get("ticket");
+  const token = url.searchParams.get("token");
+
+  if (!targetHost || !ticket) {
+    console.error("[UPGRADE] Missing host or ticket");
+    socket.destroy();
+    return;
+  }
+
+  const session = token ? sessions.get(token) : null;
+  const vCenterHost = session?.target?.host;
+
+  console.log(`[UPGRADE] Tunneling to: ${targetHost}:${targetPort} (Ticket: ${ticket.substring(0, 8)}...)`);
+
+  const connect = (host, port, isFallback = false) => {
+    const tlsOptions = { host, port, rejectUnauthorized: false };
+    if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(host)) tlsOptions.servername = host;
+
+    const esxiSocket = tls.connect(tlsOptions, () => {
+      console.log(`[UPGRADE] Connected to ESXi ${host}. Sending handshake...`);
+      const handshake = [
+        `GET /ticket/${ticket} HTTP/1.1`,
+        `Host: ${host}`,
+        `Upgrade: websocket`,
+        `Connection: Upgrade`,
+        `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}`,
+        `Sec-WebSocket-Version: 13`,
+        `Sec-WebSocket-Protocol: binary`,
+        `Origin: https://${host}`,
+        "", ""
+      ].join("\r\n");
+      esxiSocket.write(handshake);
+    });
+
+    let handshakeDone = false;
+    let buffer = Buffer.alloc(0);
+
+    esxiSocket.on("data", (data) => {
+      if (!handshakeDone) {
+        buffer = Buffer.concat([buffer, data]);
+        const endOfHeader = buffer.indexOf("\r\n\r\n");
+        if (endOfHeader !== -1) {
+          const header = buffer.slice(0, endOfHeader).toString();
+          if (header.includes("HTTP/1.1 101")) {
+            console.log(`[UPGRADE] ESXi handshake successful (${host})`);
+            handshakeDone = true;
+            
+            // Send success to browser
+            const responseHeader = [
+              "HTTP/1.1 101 Switching Protocols",
+              "Upgrade: websocket",
+              "Connection: Upgrade",
+              `Sec-WebSocket-Accept: ${crypto.createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64")}`,
+              "Sec-WebSocket-Protocol: binary",
+              "", ""
+            ].join("\r\n");
+            socket.write(responseHeader);
+
+            // Forward any remaining data in the buffer
+            const remaining = buffer.slice(endOfHeader + 4);
+            if (remaining.length > 0) socket.write(remaining);
+            
+            // Pipe raw sockets
+            esxiSocket.pipe(socket);
+            socket.pipe(esxiSocket);
+          } else {
+            console.warn(`[UPGRADE] ESXi handshake failed (${host}):`, header.split("\r\n")[0]);
+            if (!isFallback && vCenterHost && vCenterHost !== host) {
+              console.log(`[UPGRADE] Retrying with vCenter fallback: ${vCenterHost}`);
+              esxiSocket.destroy();
+              connect(vCenterHost, 443, true);
+            } else {
+              socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+              esxiSocket.destroy();
+            }
+          }
+        }
+        return;
+      }
+    });
+
+    esxiSocket.on("error", (err) => {
+      console.error(`[UPGRADE] ESXi socket error (${host}):`, err.message);
+      if (!handshakeDone && !isFallback && vCenterHost && vCenterHost !== host) {
+        esxiSocket.destroy();
+        connect(vCenterHost, 443, true);
+      } else {
+        socket.destroy();
+      }
+    });
+
+    esxiSocket.on("close", () => {
+      console.log(`[UPGRADE] ESXi connection closed (${host})`);
+      socket.end();
+    });
+    
+    socket.on("error", (err) => {
+      console.error("[UPGRADE] Browser socket error:", err.message);
+      esxiSocket.destroy();
+    });
+    
+    socket.on("close", () => {
+      console.log("[UPGRADE] Browser connection closed");
+      esxiSocket.destroy();
+    });
+  };
+
+  connect(targetHost, targetPort);
+});
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = join(__dirname, "..", "dist");
-const authUser = process.env.MASSOVA_USER || "";
-const authPass = process.env.MASSOVA_PASS || "";
+
+const authUser = process.env.NEXUS_USER || "";
+const authPass = process.env.NEXUS_PASS || "";
 const authEnabled = Boolean(authUser && authPass);
+
 const sessions = new Map();
 const SESSION_MAX_AGE = 24 * 60 * 60 * 1000;
 const loginAttempts = new Map();
 const LOGIN_RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxAttempts: 10 };
-const sseTickets = new Map();
+
+// --- Initialization & Middleware ---
+
+app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
+app.use(express.json({ limit: "1mb" }));
 
 setInterval(() => {
   const now = Date.now();
@@ -29,13 +171,9 @@ setInterval(() => {
   for (const [key, record] of loginAttempts) {
     if (now - record.windowStart > LOGIN_RATE_LIMIT.windowMs) loginAttempts.delete(key);
   }
-  for (const [ticket, entry] of sseTickets) {
-    if (now - entry.createdAt > 30000) sseTickets.delete(ticket);
-  }
 }, 60 * 60 * 1000).unref();
 
-app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
-app.use(express.json({ limit: "1mb" }));
+// --- Helpers ---
 
 const publicPaths = new Set(["/auth/login", "/auth/status", "/health"]);
 
@@ -56,6 +194,21 @@ function isValidToken(token) {
   return true;
 }
 
+function hydrateTargetFromSession(req) {
+  const token = extractToken(req);
+  const session = sessions.get(token);
+  if (session?.target) {
+    if (!req.body) req.body = {};
+    req.body.target = { 
+      ...session.target, 
+      ...(req.body.target || {}),
+      password: req.body.target?.password || session.target.password 
+    };
+  }
+}
+
+// --- Security Middleware ---
+
 if (authEnabled) {
   app.use("/api", (req, res, next) => {
     if (publicPaths.has(req.path)) return next();
@@ -67,13 +220,23 @@ if (authEnabled) {
   });
 }
 
+// --- Auth Routes ---
+
 app.get("/api/auth/status", (_req, res) => {
   res.json({ enabled: authEnabled });
 });
 
-app.post("/api/auth/login", (req, res) => {
-  if (!authEnabled) return res.json({ ok: true, token: "" });
+app.get("/api/auth/session", (req, res) => {
+  const token = extractToken(req);
+  const session = sessions.get(token);
+  if (!session) return res.status(401).json({ error: "未认证" });
 
+  const { target, inventory } = session;
+  const safeTarget = target ? { ...target, password: "" } : null;
+  res.json({ target: safeTarget, inventory });
+});
+
+app.post("/api/auth/login", async (req, res) => {
   const clientKey = req.ip || "unknown";
   const now = Date.now();
   let record = loginAttempts.get(clientKey);
@@ -86,14 +249,265 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(429).json({ ok: false, error: "登录尝试过于频繁，请稍后再试" });
   }
 
-  const { username, password } = req.body ?? {};
-  if (username === authUser && password === authPass) {
-    loginAttempts.delete(clientKey);
-    const token = crypto.randomBytes(24).toString("hex");
-    sessions.set(token, { createdAt: Date.now() });
-    return res.json({ ok: true, token });
+  const { username, password, host, platform, useVsphereAuth } = req.body ?? {};
+
+  if (useVsphereAuth && host && username && password) {
+    try {
+      const target = { host, username, password, platform: platform || "vcenter" };
+      const inventory = await new VmService(target).discoverInventory();
+      loginAttempts.delete(clientKey);
+      const token = crypto.randomBytes(24).toString("hex");
+      sessions.set(token, { 
+        createdAt: Date.now(),
+        target,
+        inventory
+      });
+      return res.json({ ok: true, token, inventory });
+    } catch (err) {
+      return res.status(401).json({ ok: false, error: `vSphere 认证失败: ${err.message}` });
+    }
   }
+
+  if (!useVsphereAuth && authEnabled) {
+    if (username === authUser && password === authPass) {
+      loginAttempts.delete(clientKey);
+      const token = crypto.randomBytes(24).toString("hex");
+      sessions.set(token, { createdAt: Date.now() });
+      return res.json({ ok: true, token });
+    }
+  }
+
   res.status(401).json({ ok: false, error: "用户名或密码错误" });
+});
+
+// --- Inventory & Target Routes ---
+
+app.post("/api/targets/discover", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const target = normalizeTarget(req.body?.target ?? {});
+  const errors = validateConnectionTarget(target);
+  if (errors.length) return res.status(400).json({ errors });
+
+  try {
+    const inventory = await new VmService(target).discoverInventory();
+    res.json({ ok: true, message: "连接成功，已读取可选资源", inventory });
+  } catch (error) {
+    res.status(502).json({ ok: false, errors: [error.message || "读取 vSphere 资源失败"] });
+  }
+});
+
+app.post("/api/deployments/check", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { target, vms, sourceInventoryPath } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+
+  const vmNames = (vms ?? []).map((vm) => vm.name).filter(Boolean);
+  if (!vmNames.length) return res.json({ conflicts: [], warnings: [] });
+
+  try {
+    const service = new VmService(normalizedTarget);
+    const inventory = await service.discoverInventory();
+    const conflicts = await service.checkVmNameConflicts(vmNames);
+    const warnings = [];
+    const selectedDatastore = inventory.datastores?.find((ds) => ds.name === target?.datastore);
+    if (selectedDatastore && selectedDatastore.freeSpace > 0) {
+      const templateItem = inventory.inventoryItems?.find((item) => item.inventoryPath === sourceInventoryPath);
+      const templateSize = templateItem?.storageCommitted ?? 0;
+      if (templateSize > 0) {
+        const totalNeeded = templateSize * vmNames.length;
+        if (totalNeeded > selectedDatastore.freeSpace) {
+          warnings.push(`Datastore "${selectedDatastore.name}" 空间可能不足`);
+        }
+      }
+    }
+    res.json({ conflicts, warnings });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "检查失败"] });
+  }
+});
+
+// --- VM Lifecycle Routes ---
+
+app.post("/api/deployments", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const validation = validateDeployment(req.body);
+  if (validation.length) return res.status(400).json({ errors: validation });
+
+  const templateValidation = await validateTemplateSource(req.body);
+  if (templateValidation.length) return res.status(400).json({ errors: templateValidation });
+
+  const job = await createJob(normalizeDeployment(req.body));
+  res.status(201).json({ job });
+});
+
+app.post("/api/vms/power", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { target, vmIds, action } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+  if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择虚拟机"] });
+
+  try {
+    const inventory = await new VmService(normalizedTarget).discoverInventory();
+    const validIds = new Set(inventory.inventoryItems.map((item) => item.id));
+    const ids = vmIds.filter((id) => validIds.has(id));
+    if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
+
+    const job = await createPowerControlJob(normalizedTarget, ids, action, req.body);
+    res.status(201).json({ job });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "操作失败"] });
+  }
+});
+
+app.post("/api/vms/snapshot", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { target, vmIds, name, description, memory } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+  if (!name) return res.status(400).json({ errors: ["快照名称不能为空"] });
+  if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择虚拟机"] });
+
+  try {
+    const job = await createSnapshotJob(normalizedTarget, vmIds, name, description, !!memory, req.body);
+    res.status(201).json({ job });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "操作失败"] });
+  }
+});
+
+app.post("/api/vms/destroy", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { target, vmIds } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+
+  try {
+    const inventory = await new VmService(normalizedTarget).discoverInventory();
+    const validIds = new Set(inventory.inventoryItems.map((item) => item.id));
+    const ids = vmIds.filter((id) => validIds.has(id));
+    if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
+
+    const job = await createDestroyJob(normalizedTarget, ids, req.body);
+    res.status(201).json({ job });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "操作失败"] });
+  }
+});
+
+// --- Snapshot Routes ---
+
+app.get("/api/vms/:id/snapshots", async (req, res) => {
+  hydrateTargetFromSession(req);
+  try {
+    const snapshots = await new VmService(req.body.target).getVmSnapshots(req.params.id);
+    res.json({ snapshots });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/vms/:id/snapshots", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { name, description, memory } = req.body;
+  if (!name) return res.status(400).json({ error: "快照名称不能为空" });
+  try {
+    const task = await new VmService(req.body.target).createSnapshot(req.params.id, name, description, memory);
+    res.json({ task });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/snapshots/:sid/revert", async (req, res) => {
+  hydrateTargetFromSession(req);
+  try {
+    const task = await new VmService(req.body.target).revertToSnapshot(req.params.sid);
+    res.json({ task });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.delete("/api/snapshots/:sid", async (req, res) => {
+  hydrateTargetFromSession(req);
+  try {
+    const task = await new VmService(req.body.target).removeSnapshot(req.params.sid, false);
+    res.json({ task });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/vms/:id/rename", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { newName } = req.body;
+  if (!newName) return res.status(400).json({ error: "新名称不能为空" });
+  try {
+    const task = await new VmService(req.body.target).renameVm(req.params.id, newName);
+    res.json({ task });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/vms/:id/reconfigure", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const { cpu, memory } = req.body;
+  try {
+    const task = await new VmService(req.body.target).reconfigureVm(req.params.id, {
+      numCPUs: cpu,
+      memoryMB: memory
+    });
+    res.json({ task });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/vms/:id/ticket", async (req, res) => {
+  hydrateTargetFromSession(req);
+  const normalizedTarget = normalizeTarget(req.body.target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+
+  try {
+    const service = new VmService(normalizedTarget);
+    const ticket = await service.acquireWebMksTicket(req.params.id);
+    console.log(`[CONSOLE TICKET] Acquired for VM ${req.params.id}:`, { ...ticket, ticket: ticket.ticket.substring(0, 10) + "..." });
+    res.json(ticket);
+  } catch (error) {
+    console.error(`[CONSOLE TICKET ERROR] VM: ${req.params.id}:`, error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// --- System & Jobs Routes ---
+
+app.post("/api/jobs/:id/cancel", (req, res) => {
+  const success = cancelJob(req.params.id);
+  res.json({ ok: success });
+});
+
+app.post("/api/jobs/:id/retry", (req, res) => {
+  const job = retryFailed(req.params.id);
+  if (!job) return res.status(400).json({ error: "重试失败或任务不符合重试条件" });
+  res.json({ job });
+});
+
+app.delete("/api/jobs/:id", (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (job.status === "running" || job.status === "queued") {
+    return res.status(400).json({ error: "正在运行的任务不能删除" });
+  }
+  const success = deleteJob(req.params.id);
+  res.json({ ok: success });
 });
 
 app.get("/api/health", async (_req, res) => {
@@ -102,14 +516,8 @@ app.get("/api/health", async (_req, res) => {
   try {
     await access(resolvedPath, fsConstants.X_OK);
     ovftoolAvailable = true;
-  } catch {
-  }
-  res.json({
-    ok: true,
-    authEnabled,
-    ovftoolPath: resolvedPath,
-    ovftoolAvailable
-  });
+  } catch {}
+  res.json({ ok: true, authEnabled, ovftoolPath: resolvedPath, ovftoolAvailable });
 });
 
 app.get("/api/jobs", (_req, res) => {
@@ -122,24 +530,9 @@ app.get("/api/jobs/:id", (req, res) => {
   res.json({ job });
 });
 
-app.post("/api/jobs/:id/events-ticket", (req, res) => {
-  const ticket = crypto.randomBytes(16).toString("hex");
-  sseTickets.set(ticket, { jobId: req.params.id, createdAt: Date.now() });
-  res.json({ ticket });
-});
-
 app.get("/api/jobs/:id/events", (req, res) => {
-  const ticketParam = req.query?.ticket;
-  if (ticketParam) {
-    const ticketEntry = sseTickets.get(ticketParam);
-    if (!ticketEntry || ticketEntry.jobId !== req.params.id || Date.now() - ticketEntry.createdAt > 30000) {
-      return res.status(401).json({ error: "无效或已过期的 SSE ticket" });
-    }
-    sseTickets.delete(ticketParam);
-  } else if (authEnabled) {
-    const token = extractToken(req);
-    if (!isValidToken(token)) return res.status(401).json({ error: "未认证" });
-  }
+  const token = extractToken(req);
+  if (authEnabled && !isValidToken(token)) return res.status(401).json({ error: "未认证" });
 
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
@@ -147,60 +540,33 @@ app.get("/api/jobs/:id/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  let lastLogIndex = job.logs.length;
+  let lastLogIndex = 0;
   let closed = false;
-
-  function safeWrite(data) {
-    if (closed) return false;
-    try {
-      res.write(data);
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
   const interval = setInterval(() => {
     const current = getJob(req.params.id);
-    if (!current) {
+    if (!current || closed) {
       clearInterval(interval);
-      safeWrite(`event: close\ndata: {}\n\n`);
       res.end();
-      closed = true;
       return;
     }
-
     if (current.logs.length > lastLogIndex) {
       const newLogs = current.logs.slice(lastLogIndex);
       lastLogIndex = current.logs.length;
       for (const log of newLogs) {
-        if (!safeWrite(`event: log\ndata: ${JSON.stringify(log)}\n\n`)) {
-          clearInterval(interval);
-          closed = true;
-          return;
-        }
+        res.write(`event: log\ndata: ${JSON.stringify(log)}\n\n`);
       }
     }
-
-    if (!safeWrite(`event: status\ndata: ${JSON.stringify({
-      status: current.status,
-      progress: current.progress
-    })}\n\n`)) {
-      clearInterval(interval);
-      closed = true;
-      return;
-    }
-
+    res.write(`event: status\ndata: ${JSON.stringify({ status: current.status, progress: current.progress })}\n\n`);
     if (current.status !== "running" && current.status !== "queued") {
       clearInterval(interval);
-      safeWrite(`event: close\ndata: {}\n\n`);
+      res.write(`event: close\ndata: {}\n\n`);
       res.end();
       closed = true;
     }
-  }, 500);
+  }, 1000);
 
   req.on("close", () => {
     closed = true;
@@ -208,135 +574,7 @@ app.get("/api/jobs/:id/events", (req, res) => {
   });
 });
 
-app.post("/api/jobs/:id/cancel", (req, res) => {
-  const cancelled = cancelJob(req.params.id);
-  if (!cancelled) return res.status(404).json({ errors: ["Job not found or already finished"] });
-  res.json({ ok: true });
-});
-
-app.post("/api/jobs/:id/retry", (req, res) => {
-  const job = retryFailed(req.params.id);
-  if (!job) return res.status(400).json({ errors: ["Job not found or not in failed state"] });
-  res.json({ job });
-});
-
-app.post("/api/vms/destroy", async (req, res) => {
-  const { target, vmIds } = req.body ?? {};
-  const normalizedTarget = normalizeTarget(target ?? {});
-  const errors = validateConnectionTarget(normalizedTarget);
-  if (errors.length) return res.status(400).json({ errors });
-  if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择要删除的虚拟机"] });
-
-  try {
-    const inventory = await discoverVsphere(normalizedTarget);
-    const validIds = new Set(inventory.inventoryItems.map((item) => item.id));
-    const ids = vmIds.filter((id) => validIds.has(id));
-    if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
-
-    const job = await createDestroyJob(normalizedTarget, ids);
-    res.status(201).json({ job });
-  } catch (error) {
-    res.status(502).json({ errors: [error.message || "操作失败"] });
-  }
-});
-
-app.post("/api/vms/power", async (req, res) => {
-  const { target, vmIds, action } = req.body ?? {};
-  const normalizedTarget = normalizeTarget(target ?? {});
-  const errors = validateConnectionTarget(normalizedTarget);
-  if (errors.length) return res.status(400).json({ errors });
-  if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择虚拟机"] });
-  if (!["on", "off", "reset"].includes(action)) return res.status(400).json({ errors: ["操作类型无效，可选: on, off, reset"] });
-
-  try {
-    const inventory = await discoverVsphere(normalizedTarget);
-    const validIds = new Set(inventory.inventoryItems.map((item) => item.id));
-    const ids = vmIds.filter((id) => validIds.has(id));
-    if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
-
-    const job = await createPowerControlJob(normalizedTarget, ids, action);
-    res.status(201).json({ job });
-  } catch (error) {
-    res.status(502).json({ errors: [error.message || "操作失败"] });
-  }
-});
-
-app.post("/api/deployments/check", async (req, res) => {
-  const { target, vms, sourceInventoryPath } = req.body ?? {};
-  const normalizedTarget = normalizeTarget(target ?? {});
-  const errors = validateConnectionTarget(normalizedTarget);
-  if (errors.length) return res.status(400).json({ errors });
-
-  const vmNames = (vms ?? []).map((vm) => vm.name).filter(Boolean);
-  if (!vmNames.length) return res.json({ conflicts: [], warnings: [] });
-
-  try {
-    const inventory = await discoverVsphere(normalizedTarget);
-    const conflicts = await checkVmNameConflicts(normalizedTarget, vmNames);
-
-    const warnings = [];
-    const selectedDatastore = inventory.datastores?.find((ds) => ds.name === target?.datastore);
-    if (selectedDatastore && selectedDatastore.freeSpace > 0) {
-      const templateItem = inventory.inventoryItems?.find((item) => item.inventoryPath === sourceInventoryPath);
-      const templateSize = templateItem?.storageCommitted ?? 0;
-      if (templateSize > 0) {
-        const totalNeeded = templateSize * vmNames.length;
-        if (totalNeeded > selectedDatastore.freeSpace) {
-          warnings.push(
-            `Datastore "${selectedDatastore.name}" 可用空间 ${formatBytes(selectedDatastore.freeSpace)}，` +
-            `预估需要 ${formatBytes(totalNeeded)} (${vmNames.length} 台 × ${formatBytes(templateSize)})，空间可能不足`
-          );
-        }
-      }
-    }
-
-    res.json({
-      conflicts,
-      warnings,
-      datastoreInfo: selectedDatastore ? {
-        name: selectedDatastore.name,
-        capacity: formatBytes(selectedDatastore.capacity),
-        freeSpace: formatBytes(selectedDatastore.freeSpace),
-        freePercent: selectedDatastore.capacity > 0
-          ? Math.round((selectedDatastore.freeSpace / selectedDatastore.capacity) * 100)
-          : 0
-      } : null
-    });
-  } catch (error) {
-    res.status(502).json({ errors: [error.message || "检查失败"] });
-  }
-});
-
-app.post("/api/deployments", async (req, res) => {
-  const validation = validateDeployment(req.body);
-  if (validation.length) return res.status(400).json({ errors: validation });
-
-  const templateValidation = await validateTemplateSource(req.body);
-  if (templateValidation.length) return res.status(400).json({ errors: templateValidation });
-
-  const job = await createJob(normalizeDeployment(req.body));
-  res.status(201).json({ job });
-});
-
-app.post("/api/targets/discover", async (req, res) => {
-  const target = normalizeTarget(req.body?.target ?? {});
-  const errors = validateConnectionTarget(target);
-  if (errors.length) return res.status(400).json({ errors });
-
-  try {
-    const inventory = await discoverVsphere(target);
-    res.json({
-      ok: true,
-      message: "连接成功，已读取可选资源",
-      inventory
-    });
-  } catch (error) {
-    res.status(502).json({
-      ok: false,
-      errors: [error.message || "读取 vSphere 资源失败"]
-    });
-  }
-});
+// --- Static Hosting & App Start ---
 
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(distDir));
@@ -346,46 +584,21 @@ if (process.env.NODE_ENV === "production") {
 async function start() {
   try {
     await initStore();
-  } catch (err) {
-    console.error("初始化存储失败:", err.message);
+    const ovftoolPath = await resolveOvfToolPath();
+    console.log(`ovftool: ${ovftoolPath}`);
+    server.listen(port, () => {
+      console.log(`vSphere Nexus server listening on http://localhost:${port}`);
+    });
+    } catch (err) {
+
+    console.error("启动失败:", err.message);
     process.exit(1);
   }
-
-  const server = app.listen(port, () => {
-    console.log(`MassOVA server listening on http://localhost:${port}${authEnabled ? " (auth enabled)" : ""}`);
-  });
-
-  server.on("error", (err) => {
-    if (err.code === "EADDRINUSE") {
-      console.error(`端口 ${port} 已被占用，请修改 PORT 环境变量`);
-      process.exit(1);
-    }
-    console.error("服务器错误:", err.message);
-  });
-
-  const ovftoolPath = await resolveOvfToolPath();
-  console.log(`ovftool: ${ovftoolPath}`);
-
-  function gracefulShutdown(signal) {
-    console.log(`\n收到 ${signal}，正在关闭...`);
-    server.close(() => {
-      console.log("HTTP 服务器已关闭");
-      process.exit(0);
-    });
-    setTimeout(() => {
-      console.error("强制关闭（等待超时）");
-      process.exit(1);
-    }, 5000);
-  }
-
-  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
-start().catch((err) => {
-  console.error("启动失败:", err.message);
-  process.exit(1);
-});
+start();
+
+// --- Validation Logic ---
 
 function normalizeDeployment(body) {
   return {
@@ -400,23 +613,20 @@ function normalizeDeployment(body) {
 
 function validateDeployment(body) {
   const errors = [];
-  if (!body || typeof body !== "object") errors.push("请求体不能为空");
   if (!body?.sourceInventoryPath) errors.push("需要选择 vSphere 模板");
   errors.push(...validateTarget(normalizeTarget(body?.target ?? {})));
-  if (!body?.target?.datastore) errors.push("需要填写 datastore");
   if (!Array.isArray(body?.vms) || !body.vms.some((vm) => vm.name)) errors.push("至少需要一个 VM 名称");
   return errors;
 }
 
 async function validateTemplateSource(body) {
   try {
-    const inventory = await discoverVsphere(normalizeTarget(body.target ?? {}));
+    const inventory = await new VmService(normalizeTarget(body.target ?? {})).discoverInventory();
     const source = inventory.inventoryItems.find((item) => item.inventoryPath === body.sourceInventoryPath);
-    if (!source) return ["没有在 vSphere inventory 中找到所选模板"];
-    if (source.kind !== "Template") return ["只允许选择 vSphere 模板，不能选择普通虚拟机"];
+    if (!source || source.kind !== "Template") return ["请选择有效的 vSphere 模板"];
     return [];
   } catch (error) {
-    return [error.message || "验证模板来源失败"];
+    return [error.message || "验证模板失败"];
   }
 }
 
@@ -428,19 +638,14 @@ function normalizeTarget(target) {
     password: String(target.password ?? ""),
     inventoryPath: String(target.inventoryPath ?? "").trim(),
     datastore: String(target.datastore ?? "").trim(),
-    folder: String(target.folder ?? "").trim(),
-    resourcePool: String(target.resourcePool ?? "").trim(),
     diskMode: String(target.diskMode ?? "thin").trim(),
     powerOn: Boolean(target.powerOn)
   };
 }
 
 function validateTarget(target) {
-  const errors = [];
-  errors.push(...validateConnectionTarget(target));
-  if (target.platform === "vcenter" && !target.inventoryPath) {
-    errors.push("vCenter 模式需要填写目标路径");
-  }
+  const errors = validateConnectionTarget(target);
+  if (target.platform === "vcenter" && !target.inventoryPath) errors.push("vCenter 模式需要填写目标路径");
   return errors;
 }
 
@@ -450,11 +655,4 @@ function validateConnectionTarget(target) {
   if (!target.username) errors.push("需要填写用户名");
   if (!target.password) errors.push("需要填写密码");
   return errors;
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes <= 0 || !Number.isFinite(bytes)) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }

@@ -37,15 +37,27 @@ export async function resolveOvfToolPath() {
   }
 
   const currentPlatform = platform();
+  // Map Node.js platform names to our bin folder names
+  const platformMap = {
+    'darwin': 'darwin',
+    'linux': 'linux',
+    'win32': 'win32'
+  };
+  
+  const folderName = platformMap[currentPlatform] || currentPlatform;
   const candidates = platformBinaries[currentPlatform] ?? ["ovftool"];
-  const binDir = join(__dirname, "..", "bin", currentPlatform);
+  const binDir = join(__dirname, "..", "bin", folderName);
 
   for (const bin of candidates) {
     const fullPath = join(binDir, bin);
     if (await fileExists(fullPath)) {
       try {
-        await chmod(fullPath, 0o755);
-      } catch {
+        // Ensure executable permissions on Unix systems
+        if (currentPlatform !== 'win32') {
+          await chmod(fullPath, 0o755);
+        }
+      } catch (err) {
+        console.warn(`[OVFTool] 无法自动设置执行权限: ${fullPath}`, err.message);
       }
       cachedPath = fullPath;
       return cachedPath;
@@ -142,7 +154,30 @@ export function stringifyCommand(args) {
 export function runOvfTool(args, { signal, onLine }) {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(getOvfToolPath(), args, { shell: false, signal });
+    const ovfPath = getOvfToolPath();
+    const env = { ...process.env };
+    const currentPlatform = platform();
+    
+    // Auto-inject library paths if running from our bundled bin folders
+    if (ovfPath.includes("/bin/")) {
+      const binDir = dirname(ovfPath);
+      const libDir = join(binDir, "lib");
+      
+      // On some platforms (like Linux), libraries might be in the same folder as the binary
+      // On others (like macOS), they are in a 'lib' subfolder.
+      // We'll check for both and add the one that exists.
+      const pathsToAdd = [binDir, libDir];
+      
+      if (currentPlatform === "darwin") {
+        const existing = env.DYLD_LIBRARY_PATH ? env.DYLD_LIBRARY_PATH.split(":") : [];
+        env.DYLD_LIBRARY_PATH = [...pathsToAdd, ...existing].join(":");
+      } else if (currentPlatform === "linux") {
+        const existing = env.LD_LIBRARY_PATH ? env.LD_LIBRARY_PATH.split(":") : [];
+        env.LD_LIBRARY_PATH = [...pathsToAdd, ...existing].join(":");
+      }
+    }
+
+    const child = spawn(ovfPath, args, { shell: false, signal, env });
     let stdout = "";
     let stderr = "";
 

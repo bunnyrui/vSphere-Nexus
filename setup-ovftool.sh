@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# MassOVA ovftool 安装辅助脚本
+# vSphere Nexus ovftool 安装辅助脚本
 # 从 VMware Developer Portal 下载 ovftool 并放入对应平台目录
 # https://developer.vmware.com/web/tool/4.6.0/ovf-tool
 
