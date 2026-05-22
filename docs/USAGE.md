@@ -261,10 +261,12 @@ ESXi 直连模式下不需要目标路径，系统自动处理。
 
 ## 数据安全
 
-- vSphere 密码仅保存在浏览器 sessionStorage 中（关闭标签页即清除）
+- vSphere 密码仅保存在浏览器 `sessionStorage` 中（关闭标签页即清除）
 - 任务日志中的 ovftool 命令密码已脱敏（只显示首字符 + 星号）
-- `data/payloads.json` 包含原始密码用于重试功能，注意文件访问权限
+- `data/payloads.json` 中的密码使用 **AES-256-GCM** 加密存储，加密密钥自动生成在 `data/.payload-key`
+- 服务端与 vSphere 通信不验证 TLS 证书（多数 ESXi 使用自签名证书）
 - 通信建议在生产环境使用 HTTPS（通过 Nginx 反向代理配置 SSL）
+- SSE 实时日志通过短期 ticket 认证，避免 token 泄漏到访问日志
 
 ---
 
