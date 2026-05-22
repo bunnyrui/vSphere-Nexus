@@ -349,6 +349,7 @@ app.post("/api/vms/power", async (req, res) => {
   const errors = validateConnectionTarget(normalizedTarget);
   if (errors.length) return res.status(400).json({ errors });
   if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择虚拟机"] });
+  if (!["on", "off", "reset"].includes(action)) return res.status(400).json({ errors: ["无效的电源操作"] });
 
   try {
     const inventory = await new VmService(normalizedTarget).discoverInventory();
