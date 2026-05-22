@@ -133,6 +133,7 @@ export const DeploymentPage = () => {
       }
     } catch (err) {
       setError(err.message);
+    } finally {
       setSubmitting(false);
     }
   };
