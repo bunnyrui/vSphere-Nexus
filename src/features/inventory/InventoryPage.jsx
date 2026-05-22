@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { cn } from '../../lib/utils';
@@ -55,7 +54,6 @@ const PowerStatus = ({ state }) => {
 export const InventoryPage = () => {
   const { inventory, target, discoverTarget, setActiveJobId, refreshJobs, refreshInventory } = useAppStore();
   const token = useAuthStore(state => state.token);
-  const navigate = useNavigate();
   
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
