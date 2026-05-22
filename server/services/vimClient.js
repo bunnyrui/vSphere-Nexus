@@ -4,20 +4,40 @@ import https from "node:https";
 
 const insecureAgent = new https.Agent({ rejectUnauthorized: false });
 
-function httpsPost(url, options, body) {
+function httpsPost(url, options, body, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const req = https.request(url, { ...options, agent: insecureAgent }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          text: Buffer.concat(chunks).toString("utf-8")
-        });
+        if (!settled) {
+          settled = true;
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            text: Buffer.concat(chunks).toString("utf-8")
+          });
+        }
       });
     });
-    req.on("error", reject);
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        req.destroy(new Error(`vSphere 连接超时 (${Math.round(timeoutMs / 1000)}s): ${url.host}`));
+      }
+    }, timeoutMs);
+
+    req.on("error", (err) => {
+      clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+
+    req.on("close", () => clearTimeout(timer));
     req.write(body);
     req.end();
   });
@@ -34,41 +54,30 @@ export class VimClient {
   }
 
   async soap(body, soapAction = `${VIM_NS}/6.0`) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    try {
-      const envelope = this.envelope(body);
-      const url = new URL(`https://${this.host}/sdk`);
-      const options = {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/xml; charset=utf-8",
-          SOAPAction: `"${soapAction}"`,
-          ...(this.cookie ? { Cookie: this.cookie } : {})
-        }
-      };
-
-      const response = await httpsPost(url, options, envelope);
-      clearTimeout(timeout);
-
-      const setCookie = response.headers["set-cookie"]?.[0] ?? "";
-      if (setCookie) {
-        this.cookie = setCookie.split(";")[0];
+    const envelope = this.envelope(body);
+    const url = new URL(`https://${this.host}/sdk`);
+    const options = {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: `"${soapAction}"`,
+        ...(this.cookie ? { Cookie: this.cookie } : {})
       }
+    };
 
-      if (response.status >= 400) {
-        throw new Error(`HTTP ${response.status}: ${response.text.slice(0, 200)}`);
-      }
+    const response = await httpsPost(url, options, envelope, 15000);
 
-      this.assertNoSoapFault(response.text);
-      return { text: response.text, cookie: this.cookie };
-    } catch (err) {
-      if (err.name === "AbortError") throw new Error(`vSphere 连接超时 (15s): ${this.host}`);
-      throw err;
-    } finally {
-      clearTimeout(timeout);
+    const setCookie = response.headers["set-cookie"]?.[0] ?? "";
+    if (setCookie) {
+      this.cookie = setCookie.split(";")[0];
     }
+
+    if (response.status >= 400) {
+      throw new Error(`HTTP ${response.status}: ${response.text.slice(0, 200)}`);
+    }
+
+    this.assertNoSoapFault(response.text);
+    return { text: response.text, cookie: this.cookie };
   }
 
   envelope(content) {

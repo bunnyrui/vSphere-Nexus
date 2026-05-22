@@ -121,8 +121,9 @@ export const useAppStore = create((set, get) => ({
       
       if (response.status === 401) {
           useAuthStore.getState().logout();
+          window.location.reload();
           return;
-       }
+        }
 
       const data = await response.json();
       if (response.ok) {
@@ -140,8 +141,9 @@ export const useAppStore = create((set, get) => ({
       
       if (response.status === 401) {
           useAuthStore.getState().logout();
+          window.location.reload();
           return;
-       }
+        }
 
       if (response.ok) {
         const data = await response.json();
