@@ -1,8 +1,8 @@
 # vSphere Nexus 全局代码审计报告
 
-**项目版本：** v1.0.0  
-**审计范围：** 前端 14 个源文件（约 4,300 行 JSX/JS）、后端 5 个源文件（约 2,030 行 JS）、全部配置文件  
-**最后更新：** 2026年5月23日
+**项目版本：** v1.0.1-beta.1  
+**审计范围：** 前端 13 个源文件（约 3,100 行 JSX/JS）、后端 5 个源文件（约 2,030 行 JS）、全部配置文件  
+**最后更新：** 2026年5月23日（第二轮全新审计）
 
 ---
 
@@ -11,19 +11,20 @@
 | 状态 | 数量 |
 |------|------|
 | **已修复** | 42 |
-| **待后续迭代** | 65 |
-| **合计** | **107** |
+| **已修复但有残留 Bug** | 1 |
+| **待后续迭代** | 72 |
+| **合计** | **115** |
 
 ---
 
 ## 目录
 
-- [一、安全漏洞（21 项）](#一安全漏洞21-项)
-- [二、健壮性与错误处理（19 项）](#二健壮性与错误处理19-项)
-- [三、性能与内存（15 项）](#三性能与内存15-项)
-- [四、代码质量与架构（25 项）](#四代码质量与架构25-项)
-- [五、用户体验与可访问性（13 项）](#五用户体验与可访问性13-项)
-- [六、基础设施与工具链（14 项）](#六基础设施与工具链14-项)
+- [一、安全漏洞（22 项）](#一安全漏洞22-项)
+- [二、健壮性与错误处理（22 项）](#二健壮性与错误处理22-项)
+- [三、性能与内存（16 项）](#三性能与内存16-项)
+- [四、代码质量与架构（26 项）](#四代码质量与架构26-项)
+- [五、用户体验与可访问性（15 项）](#五用户体验与可访问性15-项)
+- [六、基础设施与工具链（15 项）](#六基础设施与工具链15-项)
 - [七、修复记录（32 次提交）](#七修复记录32-次提交)
 - [八、回归审查记录](#八回归审查记录)
 
@@ -31,7 +32,7 @@
 
 ---
 
-# 一、安全漏洞（21 项）
+# 一、安全漏洞（22 项）
 
 ## 1.1 认证与凭证
 
@@ -42,7 +43,7 @@
 | SEC-3 | `[高]` | 凭证以明文形式驻留内存（jobs.js payloads Map） | `server/jobs.js` | ⏳ |
 | SEC-4 | `[高]` | 加密密钥竞态条件 — 并发调用可能同时创建多个密钥 | `server/jobs.js` | ✅ `8da404a` — `keyPromise` 缓存加锁 |
 | SEC-5 | `[高]` | `encryptField`/`decryptField` 为同步函数，不保证密钥已加载 | `server/jobs.js` | 🔧 密钥初始化加锁降低了风险，但同步函数本身无防护 |
-| SEC-6 | `[高]` | WebSocket 代理认证绕过风险 | `server/index.js` | ⏳ |
+| SEC-6 | `[高]` | WebSocket 代理认证绕过 — `token` 参数虽传入但**从未调用 `isValidToken()`**，任何人可指定任意 host:port 建立 TLS 连接 | `server/index.js` | ⏳ |
 | SEC-7 | `[中]` | 密码存入 Zustand 全局状态（可被 DevTools 查看） | `App.jsx` | ⏳ |
 | SEC-8 | `[中]` | 加密密钥文件权限默认 0644（其他用户可读） | `server/jobs.js` | ✅ `9d058d7` — 改为 `0o600` |
 | SEC-9 | `[中]` | 基础设施信息硬编码（默认 IP 和用户名） | `App.jsx` | ✅ `42cb0a9` — 改为空字符串 |
@@ -55,7 +56,7 @@
 |---|--------|------|------|------|
 | INJ-1 | `[高]` | VM ID 未转义直接拼入 XML — XML 注入 | `server/services/vmService.js` | ✅ `92481fb` — `escapeXml(vmId)` |
 | INJ-2 | `[高]` | 命令行参数注入 — 用户控制的值直接拼接为 ovftool 参数，`--` 开头的值可能被误解析 | `server/ovftool.js` | ⏳ |
-| INJ-3 | `[高]` | WebSocket 代理 SSRF — `host`/`port` 直接来自 URL 参数，可连接任意内部地址 | `server/index.js` | ⏳ |
+| INJ-3 | `[高]` | WebSocket 代理 SSRF — `host`/`port` 直接来自 URL 参数，可连接任意内部地址；且 TLS 连接**无超时**，不可达目标无限挂起可被利用做慢速 DoS | `server/index.js` | ⏳ |
 | INJ-4 | `[高]` | 无结构化输入验证层（缺少 zod/joi 等 schema 验证） | `server/` 全局 | 🔧 action/cpu/memory 已加校验 |
 | INJ-5 | `[中]` | action 参数无枚举验证 | `server/index.js` | ✅ `d1fcf23` — `["on","off","reset"].includes()` |
 | INJ-6 | `[中]` | cpu/memory 无范围校验 | `server/index.js` | ✅ `1e972fe` — cpu 1-128，memory 4-1048576 |
@@ -73,7 +74,7 @@
 
 ---
 
-# 二、健壮性与错误处理（19 项）
+# 二、健壮性与错误处理（22 项）
 
 ## 2.1 后端健壮性
 
@@ -87,7 +88,9 @@
 | ROB-6 | `[中]` | `progress.failed` 在 `retryFailed` 中可能变负数 | `server/jobs.js` | ✅ `c998b23` — `Math.max(0, ...)` |
 | ROB-7 | `[中]` | `powerOff` 错误在 `runDestroyJob` 中被静默吞掉 | `server/jobs.js` | ✅ `13bb5a5` — 改为 `appendLog` |
 | ROB-8 | `[中]` | `acquireWebMksTicket` 静默吞掉错误 | `server/services/vmService.js` | ⏳ |
-| ROB-9 | `[中]` | `saveToDisk` 无错误恢复 | `server/jobs.js` | ⏳ |
+| ROB-8b | `[中]` | `/api/vms/destroy` 未校验 `vmIds` 是否为非空数组（power/snapshot 端点都校验了），传 `{}` 会触发 TypeError | `server/index.js:386` | ⏳ |
+| ROB-8c | `[中]` | `ensureSession()` 并发竞态 — 缓存过期时多个请求同时重新登录，后者 cookie 覆盖前者导致前者后续调用失败 | `server/services/vmService.js:14-46` | ⏳ |
+| ROB-9 | `[中]` | `saveToDisk` 非原子写入 — 直接 `writeFile` 覆写，进程崩溃/断电会截断文件导致全部任务数据丢失（`gracefulShutdown` 的 5 秒超时加剧此风险） | `server/jobs.js` | ⏳ |
 | ROB-10 | `[中]` | 无优雅关闭（进程终止时运行中的任务直接丢失） | `server/index.js` | ✅ `23538b0` — SIGTERM/SIGINT 处理 |
 | ROB-11 | `[低]` | API 响应格式严重不一致（有的返回 `{ ok }`，有的返回 `{ error }`，有的返回 `{ errors }`） | `server/index.js` | ⏳ |
 | ROB-12 | `[低]` | catch-all 路由在非 production 模式下返回 HTML | `server/index.js` | ⏳ |
@@ -101,20 +104,22 @@
 | FROB-3 | `[中]` | `JobsPage` 进度百分比计算除零（`0/0`） | `JobsPage.jsx` | ✅ `c21c020` — `total > 0` 保护 |
 | FROB-4 | `[中]` | `resetStore()` 未清除 localStorage（页面刷新后旧状态恢复） | `useAppStore.js` | ✅ `5c9475e` — 增加 `removeItem` |
 | FROB-5 | `[中]` | 多处 `response.json()` 未处理非 JSON 响应 | `App.jsx` 等 | ⏳ |
+| FROB-5b | `[中]` | WMKS 初始化 `setTimeout(() => {...}, 200)` 未在组件卸载时清理，200ms 内卸载会泄漏 WMKS 实例和 WebSocket 连接 | `VMConsole.jsx:84` | ⏳ |
 | FROB-6 | `[低]` | `useAuthStore` 中 token 存在但 `isAuthenticated` 为 `false`（初始化时序问题） | `useAuthStore.js` | ⏳ |
 | FROB-7 | `[低]` | `useAuthStore.logout()` 未调用 `resetStore()`（数据残留） | `useAuthStore.js` | ⏳ |
 
 ---
 
-# 三、性能与内存（15 项）
+# 三、性能与内存（16 项）
 
 | # | 严重度 | 问题 | 文件 | 状态 |
 |---|--------|------|------|------|
 | PERF-1 | `[高]` | 会话缓存永不过期 — 内存泄漏 + 使用过期会话导致操作失败 | `server/services/vmService.js` | ✅ `0401bb6` — 10 分钟 TTL |
 | PERF-2 | `[高]` | 911 行死 CSS（`styles.css`）被打包进生产构建 | `src/styles.css` | ✅ `7cd2859` — 文件已删除 |
-| PERF-3 | `[中]` | 三个内存 Map（jobs/controllers/payloads）永不清理 | `server/jobs.js` | ✅ `a82b22b` — 24 小时自动清理 |
+| PERF-3 | `[中]` | 过期任务仅在启动时清理一次（`purgeExpiredJobs` 在 `initStore` 中调用），运行期间过期任务和密码 payload 无限累积 | `server/jobs.js` | 🔧 `a82b22b` — 已有清理函数但未挂载定时调度 |
 | PERF-4 | `[中]` | `JobsPage` 日志去重 O(n)（`Array.find` 遍历） | `JobsPage.jsx` | ✅ `5879806` — 改用 `Set` + `useRef` |
 | PERF-5 | `[中]` | `validateTemplateSource` 每次创建新 VmService 实例 | `server/index.js` | ⏳ |
+| PERF-5b | `[中]` | `/api/deployments/check` 调了两次 `discoverInventory` — line 311 调一次，`checkVmNameConflicts`（line 312）内部又调一次，双重 vSphere API 开销 | `server/services/vmService.js:282` + `server/index.js:310-312` | ⏳ |
 | PERF-6 | `[中]` | `hydrateTargetFromSession` 直接 mutate `req.body`（副作用） | `server/index.js` | ⏳ |
 | PERF-7 | `[中]` | 每次 `textTag` 调用都 `new RegExp`（热点路径） | `server/services/vimClient.js` | ⏳ |
 | PERF-8 | `[中]` | `folderPathParts`/`findDatacenter` 重复创建 Map（O(n) 每次） | `server/services/vmService.js` | ⏳ |
@@ -128,7 +133,7 @@
 
 ---
 
-# 四、代码质量与架构（25 项）
+# 四、代码质量与架构（26 项）
 
 ## 4.1 死代码与冗余
 
@@ -137,6 +142,7 @@
 | DED-1 | `[高]` | jQuery/jQuery UI 加载但应用代码未使用（wmks.min.js 硬依赖，无法移除） | `index.html` | ✅ `4bcb29d` → `90cd012` + `3efd7c5` — 保留并加 SRI |
 | DED-2 | `[低]` | `InventoryPage` 中 `navigate` 变量未使用 | `InventoryPage.jsx` | ✅ `11619de` |
 | DED-3 | `[低]` | `vmService` 中 `uniqueOptions` 方法未使用 | `server/services/vmService.js` | ✅ `3bb01f1` |
+| DED-3b | `[低]` | `WebSocket` 从 `ws` 导入但从未使用（代理用的是原始 TLS socket） | `server/index.js:7` | ⏳ |
 | DED-4 | `[低]` | `App.jsx` 中 VM 过滤逻辑重复出现 | `App.jsx` | ⏳ |
 | DED-5 | `[低]` | `App.jsx` 中字节转换逻辑重复出现 | `App.jsx` | ⏳ |
 
@@ -171,24 +177,26 @@
 
 | # | 严重度 | 问题 | 文件 | 状态 |
 |---|--------|------|------|------|
-| STD-1 | `[中]` | Tailwind 类名动态拼装脆弱 | `App.jsx` | ⏳ |
+| STD-1 | `[中]` | StatCard 图标背景使用无效 Tailwind 类名 — `colorClass?.replace('text-', 'text-opacity-20 bg-')` 生成 `text-opacity-20 bg-blue-500`，Tailwind v3 已移除 `text-opacity-*`，图标背景显示为实色而非预期淡色 | `App.jsx` | ⏳ |
 | STD-2 | `[低]` | `InventoryPage` 每次渲染生成当前时间（时间显示不更新） | `InventoryPage.jsx` | ⏳ |
 
 ---
 
-# 五、用户体验与可访问性（13 项）
+# 五、用户体验与可访问性（15 项）
 
 ## 5.1 用户体验
 
 | # | 严重度 | 问题 | 文件 | 状态 |
 |---|--------|------|------|------|
-| UX-1 | `[中]` | CSV 导出存在公式注入风险 | `InventoryPage.jsx` | ✅ `7641b82` — `escapeCsvField` 函数 |
+| UX-1 | `[中]` | CSV 导出公式注入防护不完整 — `escapeCsvField` 对危险字符开头的字段加了单引号前缀但**未包裹双引号**（如 `'=SUM(A1:A2)'`），CSV 解析器会将末尾单引号误读为跨字段引用 | `InventoryPage.jsx` | 🔧 `7641b82` — 已加防护但转义格式有误 |
 | UX-2 | `[中]` | `createObjectURL` 未释放（内存泄漏） | `InventoryPage.jsx` | ✅ `7641b82` — `setTimeout(() => URL.revokeObjectURL(), 1000)` |
-| UX-3 | `[中]` | `DeploymentPage` 网络映射预览显示错误 | `DeploymentPage.jsx` | ⏳ |
+| UX-3 | `[中]` | 部署确认页网络映射预览写死 `inventory?.networks?.[0]?.name`（line 511），无视用户在 Step 3 配置的实际映射，应查找 `deploymentConfig.networkMappings` | `DeploymentPage.jsx` | ⏳ |
 | UX-4 | `[中]` | `SettingsPage` 模拟保存延迟（误导性） | `SettingsPage.jsx` | ⏳ |
 | UX-5 | `[中]` | `SettingsPage` 本地状态不与 store 同步 | `SettingsPage.jsx` | ⏳ |
 | UX-6 | `[中]` | `VMConsole` 错误重试用 `window.location.reload()` 丢失全部状态 | `VMConsole.jsx` | ⏳ |
 | UX-7 | `[低]` | `wmks.min.js` 加载失败无提示 | `index.html` | ⏳ |
+| UX-7b | `[低]` | 部署数量输入无上限（`max` 属性），输入 999999 会冻结浏览器 | `DeploymentPage.jsx:389-396` | ⏳ |
+| UX-7c | `[低]` | 全选 checkbox 与筛选状态不一致 — 筛选后已选但不在当前页的 VM 不影响 checked 判断 | `InventoryPage.jsx:233-238` | ⏳ |
 
 ## 5.2 可访问性
 
@@ -203,7 +211,7 @@
 
 ---
 
-# 六、基础设施与工具链（14 项）
+# 六、基础设施与工具链（15 项）
 
 | # | 严重度 | 问题 | 文件 | 状态 |
 |---|--------|------|------|------|
@@ -221,6 +229,7 @@
 | INF-12 | `[中]` | `vite.config.js` 缺少生产构建优化 | `vite.config.js` | ⏳ |
 | INF-13 | `[中]` | start 脚本 Windows 不兼容 | `package.json` | ⏳ |
 | INF-14 | `[低]` | 缺少 Prettier 配置 | — | ⏳ |
+| INF-15 | `[中]` | 未设置任何安全 HTTP 头（CSP、X-Frame-Options、X-Content-Type-Options 等），建议引入 `helmet` | `server/index.js` | ⏳ |
 
 未列出的配置项：缺少 LICENSE 文件、未集成 Dependabot、SDK 再分发许可未声明（均 `[低]`，⏳）。
 
