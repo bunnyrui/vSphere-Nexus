@@ -4,7 +4,7 @@
 **项目版本：** v1.0.0  
 **审计范围：** 前端 14 个源文件（约 4,300 行 JSX/JS + 987 行 CSS）、后端 5 个源文件（约 2,030 行 JS）、全部配置文件  
 **审计工具：** 人工代码审查  
-**最后更新：** 2026年5月23日（第一轮修复完成）
+**最后更新：** 2026年5月23日（第二轮回归审查完成）
 
 ---
 
@@ -12,16 +12,16 @@
 
 | 状态 | 数量 |
 |------|------|
-| **已修复** | 40 |
-| **待后续迭代** | 67 |
+| **已修复** | 42 |
+| **待后续迭代** | 65 |
 | **合计** | **107** |
 
 | 严重度 | 前端 | 后端 | 配置/基础设施 | 合计 |
 |--------|------|------|--------------|------|
-| **高** | 6 已修复 / 2 待处理 | 9 已修复 / 6 待处理 | 5 已修复 / 3 待处理 | 31 |
+| **高** | 6 已修复 / 2 待处理 | 10 已修复 / 5 待处理 | 5 已修复 / 3 待处理 | 31 |
 | **中** | 12 已修复 / 11 待处理 | 9 已修复 / 8 待处理 | 3 已修复 / 7 待处理 | 50 |
 | **低** | 2 已修复 / 11 待处理 | 1 已修复 / 8 待处理 | 1 已修复 / 3 待处理 | 26 |
-| **合计** | **20 已修复** | **19 已修复** | **9 已修复** | **107** |
+| **合计** | **20 已修复** | **20 已修复** | **9 已修复** | **107** |
 
 > 状态标记说明：`已修复 (commit hash)` | `待处理` | `部分修复`
 
@@ -35,7 +35,8 @@
 - [第四部分：跨文件系统性问题](#第四部分跨文件系统性问题)
 - [第五部分：按文件详细问题清单](#第五部分按文件详细问题清单)
 - [第六部分：优先修复建议（Top 10）](#第六部分优先修复建议top-10)
-- [第七部分：修复记录（29 次提交）](#第七部分修复记录29-次提交)
+- [第七部分：修复记录（32 次提交）](#第七部分修复记录32-次提交)
+- [第八部分：回归审查记录](#第八部分回归审查记录)
 
 ---
 
@@ -81,13 +82,13 @@
 | **状态** | **已修复** — commit `42cb0a9` |
 | **修复方式** | 将默认 IP `'172.16.109.250'` 和用户名 `'administrator@vsphere.local'` 改为空字符串，由用户自行输入。 |
 
-### S5. CDN 资源无 SRI 校验 `已修复 (4bcb29d)`
+### S5. CDN 资源无 SRI 校验 `已修复 (4bcb29d → 90cd012, 3efd7c5)`
 
 | 项目 | 详情 |
 |------|------|
 | **严重度** | 高 |
-| **状态** | **已修复** — commit `4bcb29d` |
-| **修复方式** | 直接删除 jQuery 和 jQuery UI 的 CDN 引用（项目完全未使用 jQuery），同时消除了无 SRI 校验的供应链风险，减少约 150KB 加载。 |
+| **状态** | **已修复** — commit `4bcb29d` → 回归修复 `90cd012` + `3efd7c5` |
+| **修复方式** | 最初直接删除 jQuery/jQuery UI CDN 引用（项目应用代码未使用）。回归测试发现 `wmks.min.js`（VMware WebMKS SDK）隐式依赖 `$`（jQuery）和 `$.widget`（jQuery UI），删除后控制台报错 `$.widget is not a function`。现改为保留 jQuery + jQuery UI，并添加 SRI 完整性校验。 |
 
 ### S6. CSV 导出未转义 — 公式注入风险 `已修复 (7641b82)`
 
@@ -207,9 +208,9 @@
 | **状态** | 待处理（需创建响应封装中间件，影响所有 API 端点） |
 | **文件** | `server/index.js` |
 
-### L8. jQuery 完全未使用但仍加载 `已修复 (4bcb29d)`
+### L8. jQuery/jQuery UI 加载但应用代码未使用 `已修复 (4bcb29d → 90cd012, 3efd7c5)`
 
-与 S5 合并修复。
+最初与 S5 合并修复（直接删除）。回归测试发现 `wmks.min.js` 隐式依赖 jQuery + jQuery UI，恢复并添加 SRI。严格来说 jQuery/jQuery UI 仍被加载（约 150KB），但因 SDK 硬依赖无法移除。若未来替换 WMKS SDK 则可一并移除。
 
 ### L9. `styles.css` 911 行完全未使用 `已修复 (7cd2859)`
 
@@ -290,7 +291,7 @@
 | # | 文件 | 行号 | 类别 | 问题描述 | 状态 |
 |---|------|------|------|----------|------|
 | F-M1 | `useAppStore.js` | 68-101 | DRY 违反 | localStorage 持久化逻辑重复三次。 | **已修复** `cf4d27b` — 提取为 `persistToStorage()` 辅助函数 |
-| F-M2 | `useAppStore.js` | 133, 152 | 最佳实践 | 401 使用 `window.location.reload()`。 | **已修复** `3675740` — 改用 `useAuthStore.getState().logout()` |
+| F-M2 | `useAppStore.js` | 133, 152 | 最佳实践 | 401 使用 `window.location.reload()`。 | **已修复** `3675740` → `00d316c` — 改用 `useAuthStore.getState().logout()` + `window.location.reload()` 确保页面跳转 |
 | F-M3 | `useAppStore.js` | 195-202 | 逻辑错误 | `resetStore()` 未清除 localStorage。 | **已修复** `5c9475e` — 增加 `localStorage.removeItem(STORAGE_KEY)` |
 | F-M4 | `useAuthStore.js` | 5 | 架构 | token 存在但 `isAuthenticated` 为 `false`。 | 待处理 |
 | F-M5 | `useAuthStore.js` | 27 | 反模式 | Zustand store 接受回调参数。 | 待处理 |
@@ -388,7 +389,7 @@
 | B-L3 | `server/index.js` | 52, 482 | 日志泄露 | Ticket 部分泄露到日志。 | 待处理 |
 | B-L4 | `server/jobs.js` | 281-283 | 性能 | splice 大数组。 | 待处理 |
 | B-L5 | `server/jobs.js` | 25 | 安全 | 加密密钥文件权限 0644。 | **已修复** `9d058d7` — 改为 `0o600` |
-| B-L6 | `server/services/vimClient.js` | 23 | 硬编码 | 超时 15 秒不可配置。 | 待处理 |
+| B-L6 | `server/services/vimClient.js` | 23 | Bug | 超时机制完全无效（AbortController 对 https.request 无效）。 | **已修复** `00d316c` — 改用 req.setTimeout + req.destroy |
 | B-L7 | `server/services/vmService.js` | 356, 371 | 性能 | 重复创建 Map。 | 待处理 |
 | B-L8 | `server/services/vmService.js` | 417-425 | 死代码 | uniqueOptions 未使用。 | **已修复** `3bb01f1` — 删除 |
 | B-L9 | `server/ovftool.js` | 146-152 | 安全 | 引用规则不完整。 | 待处理 |
@@ -427,7 +428,7 @@
 | SP-3 | 子组件在函数体内定义 | `SettingsPage.jsx` | 待处理 |
 | SP-4 | 日志去重 O(n) | `JobsPage.jsx` | **已修复** `5879806` |
 | SP-5 | 911 行死 CSS 被打包 | `styles.css` | **已修复** `7cd2859` |
-| SP-6 | 150KB 未使用的 jQuery 被加载 | `index.html` | **已修复** `4bcb29d` |
+| SP-6 | 150KB jQuery/jQuery UI 加载（wmks.min.js 硬依赖，无法移除） | `index.html` | **已修复** `4bcb29d` → 回归 `90cd012` + `3efd7c5`（加 SRI） |
 | SP-7 | 会话缓存无过期 | `server/services/vmService.js` | **已修复** `0401bb6` |
 | SP-8 | 内存中任务永不清理 | `server/jobs.js` | **已修复** `a82b22b` |
 
@@ -472,7 +473,7 @@
 
 | 行号 | 严重度 | 问题 | 状态 |
 |------|--------|------|------|
-| 7-8 | 高 | jQuery CDN 无 SRI + 未使用 | **已修复** `4bcb29d` |
+| 7-8 | 高 | jQuery/jQuery UI CDN 无 SRI | **已修复** `4bcb29d` → 回归修复 `90cd012` + `3efd7c5`（wmks.min.js 硬依赖 jQuery + jQuery UI，恢复并加 SRI） |
 | 9 | 中 | wmks.min.js 加载失败无提示 | 待处理 |
 
 ### `src/styles.css`
@@ -488,7 +489,7 @@
 | 3 | 低 | 魔法字符串 | 待处理 |
 | 68-101 | 中 | 持久化逻辑重复 | **已修复** `cf4d27b` |
 | 125-129 | 高 | 每次请求传明文密码 | 待处理 |
-| 133, 152 | 中 | 401 使用 reload() | **已修复** `3675740` |
+| 133, 152 | 中 | 401 使用 reload() | **已修复** `3675740` → `00d316c` |
 | 195-202 | 中 | resetStore 未清 localStorage | **已修复** `5c9475e` |
 
 ### `src/App.jsx`
@@ -571,6 +572,7 @@
 | 行号 | 严重度 | 问题 | 状态 |
 |------|--------|------|------|
 | 16-20 | 高 | 全局修改 TLS | **已修复** `9ac7047` — 改用 https.Agent |
+| 36-72 | 高 | 超时机制无效（AbortController 对 https.request 无用） | **已修复** `00d316c` — 改用 req.setTimeout + req.destroy + settled 防双重 resolve |
 | 75-77 | 高 | 正则解析 XML | 待处理 |
 
 ### `server/services/vmService.js`
@@ -607,7 +609,7 @@
 
 ---
 
-# 第七部分：修复记录（29 次提交）
+# 第七部分：修复记录（32 次提交）
 
 | # | Commit | 类型 | 修复内容 |
 |---|--------|------|----------|
@@ -640,7 +642,77 @@
 | 27 | `ff0fec0` | fix | SSE 端点增加心跳保活防止代理断开空闲连接 |
 | 28 | `23538b0` | feat | 添加优雅关闭处理（SIGTERM/SIGINT） |
 | 29 | `03f55c4` | chore | 补全 .env.example、.editorconfig、.gitignore、engines 字段 |
+| 30 | `90cd012` | fix | 恢复 jQuery 引用 — wmks.min.js 依赖 `$` 符号（回归修复） |
+| 31 | `3efd7c5` | fix | 恢复 jQuery UI 引用 — wmks.min.js 依赖 `$.widget`（回归修复） |
+| 32 | `00d316c` | fix | 修复 vimClient 超时无效（AbortController 对 https.request 无用）+ 401 后页面不跳转 |
 
 ---
 
-> **审计结论：** 第一轮修复已完成 29 次提交，覆盖 40 项问题（含全部可安全修复的高危安全项）。剩余 67 项为需要架构重构或依赖评估的问题，建议在后续迭代中逐步处理。优先级为：SSRF 防护 > Token 认证重构 > API 响应统一 > ESLint/Vitest 引入 > 组件拆分。
+# 第八部分：回归审查记录
+
+**审查日期：** 2026年5月23日（第一轮修复提交后）  
+**审查方法：** 逐文件全文审查所有修改，检查是否有遗漏的副作用或引入的新 bug
+
+## 8.1 触发原因
+
+用户在浏览器控制台发现 `$.widget is not a function` 报错。原因是 `wmks.min.js`（VMware WebMKS SDK）隐式依赖 jQuery（`$`）和 jQuery UI（`$.widget`），在 commit `4bcb29d` 中被一起删除。
+
+## 8.2 发现并修复的回归问题
+
+| # | 问题 | 严重性 | 触发方式 | 修复 |
+|---|------|--------|----------|------|
+| R1 | jQuery 被误删 — `wmks.min.js` 依赖 `$` | **高** | 控制台报错 `ReferenceError: $ is not defined` | `90cd012` 恢复 jQuery + SRI |
+| R2 | jQuery UI 被误删 — `wmks.min.js` 依赖 `$.widget` | **高** | 控制台报错 `$.widget is not a function` | `3efd7c5` 恢复 jQuery UI + SRI |
+
+**根因：** 审计时仅检查了应用代码（JSX/JS）是否使用 `$` 或 `$.widget`，忽略了第三方 SDK（`wmks.min.js`）的隐式依赖。`wmks.min.js` 是压缩后的闭包，其内部调用了 jQuery 和 jQuery UI 的 API。
+
+**教训：** 删除前端 CDN 依赖时，除了搜索应用代码引用外，还需检查 `public/` 目录下的第三方库是否有隐式依赖。
+
+## 8.3 代码审查中发现的额外 Bug
+
+| # | 问题 | 严重性 | 文件 | 修复 |
+|---|------|--------|------|------|
+| B-R1 | `vimClient.soap()` 使用 `AbortController` + `setTimeout` 实现超时，但 `https.request` 不支持 `AbortController`，超时完全不生效 | **高** | `server/services/vimClient.js:36-72` | `00d316c` — 改用 `req.setTimeout()` + `req.destroy()`，`httpsPost` 内部统一管理 `settled` 状态防止 double-resolve |
+| B-R2 | `useAppStore` 中 401 处理调用 `logout()` 清除 token 后没有刷新页面，用户停留在当前页看到空白 | **高** | `src/store/useAppStore.js:122-125, 140-143` | `00d316c` — 添加 `window.location.reload()` 触发路由守卫 |
+
+## 8.4 审查确认无问题的修改项
+
+以下修改经逐行审查，确认逻辑正确无副作用：
+
+| 修改项 | 文件 | 审查结论 |
+|--------|------|----------|
+| `escapeXml(vmId)` | `vmService.js` | ✅ 转义正确，不影响正常 VM ID |
+| action 枚举校验 `["on","off","reset"]` | `index.js:352` | ✅ 前端发送的 action 值均在枚举范围内 |
+| cpu 1-128 / memory 4-1048576 范围校验 | `index.js:463-464` | ✅ 范围合理，前端滑块最大 64 核不会超限 |
+| 密钥文件权限 `0o600` | `jobs.js:27` | ✅ 写入时指定 mode |
+| `keyPromise` 加锁 | `jobs.js:21` | ✅ 所有调用者均已 await `getEncryptionKey()` |
+| `progress.failed` Math.max(0, ...) | `jobs.js:224` | ✅ 仅影响 retryFailed 场景 |
+| `checkVmNameConflicts` 移除 try/catch | `vmService.js:282-287` | ✅ 调用方 `index.js:312` 有 catch 块正确处理 |
+| `runDestroyJob` powerOff 日志 | `jobs.js:455` | ✅ 仅增加日志不影响流程 |
+| `https.Agent` TLS 替代方案 | `vimClient.js:5` | ✅ 仅影响 vSphere SOAP 连接 |
+| VMConsole `useAuthStore.getState().token` | `VMConsole.jsx:56,72` | ✅ 在非 React 上下文中正确获取 token |
+| CSV `escapeCsvField` | `InventoryPage.jsx:198-204` | ✅ 正确处理公式注入和特殊字符 |
+| `URL.revokeObjectURL` | `InventoryPage.jsx:230` | ✅ 延迟 1 秒释放，确保下载完成 |
+| `resetStore` 清除 localStorage | `useAppStore.js:186` | ✅ 同时重置状态和持久化 |
+| `persistToStorage` 辅助函数 | `useAppStore.js:54-61` | ✅ 从 `get()` 读取最新状态 |
+| `DeploymentPage` setSubmitting finally | `DeploymentPage.jsx:136-138` | ✅ 确保按钮状态恢复 |
+| `JobsPage` Set 日志去重 | `JobsPage.jsx:50,78-81` | ✅ `useRef` 正确避免重渲染 |
+| `JobsPage` 除零保护 | `JobsPage.jsx:234,238` | ✅ `total > 0` 三元表达式正确 |
+| Session 缓存 10min TTL | `vmService.js:4,17-23` | ✅ 读取时检查过期 |
+| `purgeExpiredJobs` 24h 清理 | `jobs.js:77-89` | ✅ 跳过运行中的任务 |
+| ovftool 30min 超时 | `ovftool.js:179-185` | ✅ `settled` 防双重 resolve |
+| SSE 心跳每 15 秒 | `index.js:567-569` | ✅ `heartbeatCounter % 15 === 0`（每 1s 递增，15 次即 15s） |
+| 优雅关闭 SIGTERM/SIGINT | `index.js:609-621` | ✅ `saveToDisk` 已正确 export |
+| `handleSingleAction` 路径拼接 | `InventoryPage.jsx:250` | ✅ `ticket` 不走此路径，`rename` 路径正确 |
+| index.html 无其他遗漏依赖 | `index.html` | ✅ `public/` 目录仅含 `wmks.min.js` |
+
+## 8.5 依赖关系确认
+
+`wmks.min.js` 的完整依赖链为：
+
+```
+jQuery (3.7.1) → jQuery UI (1.13.2) → wmks.min.js
+     $               $.widget          WMKS SDK
+```
+
+三个库必须在 `index.html` 中按此顺序加载，当前配置正确。两个 CDN 资源均已添加 `integrity`（SRI）和 `crossorigin="anonymous"` 属性。
