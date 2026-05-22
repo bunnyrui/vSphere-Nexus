@@ -1,11 +1,32 @@
 const VIM_NS = "urn:vim25";
 
+import https from "node:https";
+
+const insecureAgent = new https.Agent({ rejectUnauthorized: false });
+
+function httpsPost(url, options, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { ...options, agent: insecureAgent }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          text: Buffer.concat(chunks).toString("utf-8")
+        });
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 export class VimClient {
   constructor(host) {
     this.host = host;
     this.cookie = "";
-    this.tlsBypassCount = 0;
-    this.tlsOriginalValue = undefined;
   }
 
   setCookie(cookie) {
@@ -13,50 +34,40 @@ export class VimClient {
   }
 
   async soap(body, soapAction = `${VIM_NS}/6.0`) {
-    if (this.tlsBypassCount === 0) {
-      this.tlsOriginalValue = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    }
-    this.tlsBypassCount++;
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
     try {
       const envelope = this.envelope(body);
-      const response = await fetch(`https://${this.host}/sdk`, {
+      const url = new URL(`https://${this.host}/sdk`);
+      const options = {
         method: "POST",
-        signal: controller.signal,
         headers: {
           "Content-Type": "text/xml; charset=utf-8",
           SOAPAction: `"${soapAction}"`,
           ...(this.cookie ? { Cookie: this.cookie } : {})
-        },
-        body: envelope
-      });
-      
-      const text = await response.text();
-      const setCookie = response.headers.get("set-cookie") ?? "";
+        }
+      };
+
+      const response = await httpsPost(url, options, envelope);
+      clearTimeout(timeout);
+
+      const setCookie = response.headers["set-cookie"]?.[0] ?? "";
       if (setCookie) {
         this.cookie = setCookie.split(";")[0];
       }
-      
-      this.assertNoSoapFault(text);
-      return { text, cookie: this.cookie };
+
+      if (response.status >= 400) {
+        throw new Error(`HTTP ${response.status}: ${response.text.slice(0, 200)}`);
+      }
+
+      this.assertNoSoapFault(response.text);
+      return { text: response.text, cookie: this.cookie };
     } catch (err) {
       if (err.name === "AbortError") throw new Error(`vSphere 连接超时 (15s): ${this.host}`);
       throw err;
     } finally {
       clearTimeout(timeout);
-      this.tlsBypassCount--;
-      if (this.tlsBypassCount <= 0) {
-        this.tlsBypassCount = 0;
-        if (this.tlsOriginalValue === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = this.tlsOriginalValue;
-        }
-      }
     }
   }
 
