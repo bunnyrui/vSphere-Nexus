@@ -151,6 +151,7 @@ function App() {
   const [datastoreInfo, setDatastoreInfo] = useState(null);
   const [selectedVmIds, setSelectedVmIds] = useState(new Set());
   const [destroying, setDestroying] = useState(false);
+  const [activeTab, setActiveTab] = useState("deploy");
 
   const activeJob = jobs.find((job) => job.id === activeJobId) ?? jobs[0];
   const effectiveVms = getEffectiveVms(form);
@@ -177,17 +178,13 @@ function App() {
     try {
       const response = await fetch("/api/auth/status");
       const data = await response.json();
-      if (data.enabled && !localStorage.getItem(tokenKey)) {
-        setAuthed(false);
-      }
+      if (data.enabled && !localStorage.getItem(tokenKey)) setAuthed(false);
     } catch {
       setAuthed(false);
     }
   }
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  useEffect(() => { checkAuth(); }, []);
 
   useEffect(() => {
     if (!authed) return;
@@ -202,9 +199,7 @@ function App() {
     sessionStorage.setItem(sessionStorageKey, JSON.stringify({ target: { password } }));
   }, [form]);
 
-  if (!authed) {
-    return <LoginPage onLogin={() => { setAuthed(true); }} />;
-  }
+  if (!authed) return <LoginPage onLogin={() => { setAuthed(true); }} />;
 
   async function submitDeployment(event) {
     event.preventDefault();
@@ -217,11 +212,7 @@ function App() {
         const checkResponse = await fetch("/api/deployments/check", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({
-            target: form.target,
-            vms: effectiveVms,
-            sourceInventoryPath: form.sourceInventoryPath
-          })
+          body: JSON.stringify({ target: form.target, vms: effectiveVms, sourceInventoryPath: form.sourceInventoryPath })
         });
         if (checkResponse.status === 401) { setAuthed(false); return; }
         if (checkResponse.ok) {
@@ -229,13 +220,9 @@ function App() {
           setConflicts(checkData.conflicts ?? []);
           setWarnings(checkData.warnings ?? []);
           setDatastoreInfo(checkData.datastoreInfo ?? null);
-          if (checkData.conflicts?.length) {
-            setSubmitting(false);
-            return;
-          }
+          if (checkData.conflicts?.length) { setSubmitting(false); return; }
         }
       }
-
       const response = await fetch("/api/deployments", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -301,6 +288,7 @@ function App() {
     setProbe(null);
     setInventory(null);
     setDatastoreInfo(null);
+    setSelectedVmIds(new Set());
     setProbing(true);
     try {
       const response = await fetch("/api/targets/discover", {
@@ -325,18 +313,18 @@ function App() {
     setProbe(null);
     setInventory(null);
     setDatastoreInfo(null);
+    setSelectedVmIds(new Set());
   }
 
   async function saveAsTemplate() {
     if (!templateName.trim()) return;
     const { target, ...rest } = form;
     const { password, ...safeTarget } = target;
-    const config = { ...rest, target: safeTarget };
     try {
       const response = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ name: templateName.trim(), config })
+        body: JSON.stringify({ name: templateName.trim(), config: { ...rest, target: safeTarget } })
       });
       if (!response.ok) throw new Error("保存失败");
       setShowTemplateDialog(false);
@@ -360,34 +348,23 @@ function App() {
     setDatastoreInfo(null);
   }
 
-  async function deleteTemplate(name) {
-    await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE", headers: authHeaders() });
-    await loadTemplates();
-  }
-
   function toggleVmSelect(vmId) {
     setSelectedVmIds((prev) => {
       const next = new Set(prev);
-      if (next.has(vmId)) next.delete(vmId);
-      else next.add(vmId);
+      if (next.has(vmId)) next.delete(vmId); else next.add(vmId);
       return next;
     });
   }
 
   function toggleSelectAllVms() {
     const vms = inventory?.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
-    if (selectedVmIds.size === vms.length && vms.length > 0) {
-      setSelectedVmIds(new Set());
-    } else {
-      setSelectedVmIds(new Set(vms.map((v) => v.id)));
-    }
+    if (selectedVmIds.size === vms.length && vms.length > 0) setSelectedVmIds(new Set());
+    else setSelectedVmIds(new Set(vms.map((v) => v.id)));
   }
 
   async function destroySelectedVms() {
     if (!selectedVmIds.size) return;
-    const names = (inventory?.inventoryItems ?? [])
-      .filter((item) => selectedVmIds.has(item.id))
-      .map((item) => item.name);
+    const names = (inventory?.inventoryItems ?? []).filter((item) => selectedVmIds.has(item.id)).map((item) => item.name);
     if (!confirm(`确认关机并删除以下 ${names.length} 台虚拟机？\n\n${names.slice(0, 10).join("\n")}${names.length > 10 ? `\n...还有 ${names.length - 10} 台` : ""}`)) return;
     setDestroying(true);
     setError("");
@@ -417,7 +394,7 @@ function App() {
           <span className="brandMark"><Server size={22} /></span>
           <div>
             <strong>MassOVA</strong>
-            <small>ESXi 批量 OVA 部署</small>
+            <small>vSphere 批量部署工具</small>
           </div>
         </div>
         <div className="metric">
@@ -442,11 +419,7 @@ function App() {
         )}
         <nav className="jobNav">
           {jobs.map((job) => (
-            <button
-              className={job.id === activeJob?.id ? "active" : ""}
-              key={job.id}
-              onClick={() => setActiveJobId(job.id)}
-            >
+            <button className={job.id === activeJob?.id ? "active" : ""} key={job.id} onClick={() => setActiveJobId(job.id)}>
               <StatusIcon status={job.status} />
               <span>{job.id}</span>
               <small>{job.status}</small>
@@ -458,32 +431,19 @@ function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p>Deployment Console</p>
-            <h1>批量部署 OVA 到 ESXi</h1>
+            <p>MassOVA Console</p>
+            <h1>vSphere 批量部署与虚拟机管理</h1>
           </div>
           <div className="topbarActions">
             {templates.length > 0 && (
-              <select
-                className="templateSelect"
-                value=""
-                onChange={(e) => { if (e.target.value) loadTemplate(e.target.value); }}
-              >
+              <select className="templateSelect" value="" onChange={(e) => { if (e.target.value) loadTemplate(e.target.value); }}>
                 <option value="">加载模板...</option>
                 {templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
               </select>
             )}
             <button type="button" className="secondaryAction" onClick={() => setShowTemplateDialog(true)}>
-              <Bookmark size={16} />
-              保存模板
+              <Bookmark size={16} /> 保存模板
             </button>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={form.dryRun}
-                onChange={(event) => setForm((current) => ({ ...current, dryRun: event.target.checked }))}
-              />
-              <span>干跑模式</span>
-            </label>
           </div>
         </header>
 
@@ -503,246 +463,214 @@ function App() {
           </div>
         )}
 
-        <div className="contentGrid">
-          <form className="panel formPanel" onSubmit={submitDeployment}>
-            <SectionTitle icon={<Server />} title="连接与目标" />
+        <section className="panel connectionPanel">
+          <SectionTitle icon={<Server />} title="连接 vSphere" />
+          <div className="connectionGrid">
             <div className="field">
-              <label>平台类型</label>
-              <select
-                value={form.target.platform}
-                onChange={(event) => {
-                  resetConnection();
-                  updateNested(setForm, ["target", "platform"], event.target.value);
-                }}
-              >
+              <label>平台</label>
+              <select value={form.target.platform} onChange={(e) => { resetConnection(); updateNested(setForm, ["target", "platform"], e.target.value); }}>
                 <option value="esxi">ESXi</option>
                 <option value="vcenter">vCenter</option>
               </select>
             </div>
-            <TextField form={form} setForm={setForm} path={["target", "host"]} label="vSphere 地址" placeholder={form.target.platform === "vcenter" ? "172.16.109.250" : "192.168.10.20"} onChangeExtra={resetConnection} />
+            <TextField form={form} setForm={setForm} path={["target", "host"]} label="地址" placeholder={form.target.platform === "vcenter" ? "172.16.109.250" : "192.168.10.20"} onChangeExtra={resetConnection} />
             <TextField form={form} setForm={setForm} path={["target", "username"]} label="用户名" onChangeExtra={resetConnection} />
             <TextField form={form} setForm={setForm} path={["target", "password"]} label="密码" type="password" icon={<KeyRound size={16} />} onChangeExtra={resetConnection} />
-
-            <div className="probeRow span2">
+            <div className="connectionAction">
               <button type="button" className="secondaryAction" onClick={probeTarget} disabled={probing}>
-                <RefreshCw size={17} />
-                {probing ? "连接中" : "连接并读取资源"}
+                <RefreshCw size={16} />
+                {probing ? "连接中..." : "连接"}
               </button>
               {probe && (
-                <div className={probe.ok ? "probeResult okResult" : "probeResult badResult"}>
-                  <StatusIcon status={probe.ok ? "succeeded" : "failed"} />
-                  <span>{probe.message}</span>
-                </div>
+                <span className={probe.ok ? "probeTag okTag" : "probeTag badTag"}>
+                  <StatusIcon status={probe.ok ? "succeeded" : "failed"} /> {probe.message}
+                </span>
               )}
             </div>
+          </div>
+        </section>
 
-            {inventory && (
-              <section className="resourceGrid span2">
-                <ResourceSelect
-                  label={form.target.platform === "vcenter" ? "部署目标" : "主机"}
-                  value={form.target.inventoryPath}
-                  options={inventory.computeTargets}
-                  valueKey="inventoryPath"
-                  render={(item) => item.datacenter ? `${item.datacenter} / ${item.name}` : item.name}
-                  onChange={(value) => updateNested(setForm, ["target", "inventoryPath"], value)}
-                  disabled={form.target.platform === "esxi"}
-                />
-                <DatastoreSelect
-                  value={form.target.datastore}
-                  datastores={inventory.datastores ?? []}
-                  onChange={(value) => updateNested(setForm, ["target", "datastore"], value)}
-                />
-                <ResourceSelect
-                  label="VM Folder"
-                  value={form.target.folder}
-                  options={[{ id: "", name: "不指定" }, ...(inventory.folders ?? [])]}
-                  valueKey="name"
-                  onChange={(value) => updateNested(setForm, ["target", "folder"], value === "不指定" ? "" : value)}
-                />
-                <div className="field">
-                  <label>目标路径</label>
-                  <input value={form.target.platform === "vcenter" ? form.target.inventoryPath : "ESXi 直连"} readOnly />
-                </div>
-              </section>
-            )}
+        <div className="tabBar">
+          <button className={activeTab === "deploy" ? "tab active" : "tab"} onClick={() => setActiveTab("deploy")}>
+            <Play size={15} /> 批量部署
+          </button>
+          <button className={activeTab === "cleanup" ? "tab active" : "tab"} onClick={() => setActiveTab("cleanup")}>
+            <Trash2 size={15} /> 虚拟机清理
+          </button>
+          <div className="tabSpacer" />
+          <label className="switch small">
+            <input type="checkbox" checked={form.dryRun} onChange={(e) => setForm((c) => ({ ...c, dryRun: e.target.checked }))} />
+            <span>干跑模式</span>
+          </label>
+        </div>
 
-            {!inventory && (
-              <div className="hintBox span2">
-                填写地址、账号和密码后先连接，datastore、网络和部署目标会自动变成可选择项。
-              </div>
-            )}
-
-            <div className="field">
-              <label>磁盘模式</label>
-              <select
-                value={form.target.diskMode}
-                onChange={(event) => updateNested(setForm, ["target", "diskMode"], event.target.value)}
-              >
-                <option value="thin">thin</option>
-                <option value="thick">thick</option>
-                <option value="eagerZeroedThick">eagerZeroedThick</option>
-              </select>
-            </div>
-
-            <label className="checkLine">
-              <input
-                type="checkbox"
-                checked={form.target.powerOn}
-                onChange={(event) => updateNested(setForm, ["target", "powerOn"], event.target.checked)}
-              />
-              <Power size={16} />
-              部署后开机
-            </label>
-
-            <section className="nestedSection span2">
-              <SectionTitle icon={<Copy />} title="部署源" />
-              <div className="resourceGrid">
-                <ResourceSelect
-                  label="模板"
-                  value={form.sourceInventoryPath}
-                  options={(inventory?.inventoryItems ?? []).filter((item) => item.kind === "Template")}
-                  valueKey="inventoryPath"
-                  render={(item) => `${item.datacenter} / ${item.name}`}
-                  onChange={(value) => setForm((current) => applyInventorySourceDefaults({ ...current, sourceInventoryPath: value }, inventory))}
-                />
-                <div className="hintBox">
-                  这里只允许选择 vSphere 模板作为源。大批量部署时不会重复传输本地 OVA。
-                </div>
-              </div>
-            </section>
-
-            <Repeater
-              icon={<Network />}
-              title="网络映射"
-              rows={form.networkMappings}
-              columns={[["source", "模板源网络"], ["target", "ESXi Port Group"]]}
-              selectOptions={{
-                source: sourceNetworkOptions,
-                target: inventory?.networks?.map((item) => item.name) ?? []
-              }}
-              onChange={(rows) => setForm((current) => ({ ...current, networkMappings: rows }))}
-              emptyRow={{ source: "", target: "" }}
+        <div className="contentGrid">
+          {activeTab === "deploy" ? (
+            <DeployTab
+              form={form} setForm={setForm} inventory={inventory} error={error} setError={setError}
+              submitting={submitting} conflicts={conflicts} warnings={warnings} sourceNetworkOptions={sourceNetworkOptions}
+              onSubmit={submitDeployment} onForceSubmit={forceSubmit} onResetConnection={resetConnection}
             />
-
-            <Repeater
-              icon={<Settings2 />}
-              title="OVF 属性"
-              rows={form.properties}
-              columns={[["key", "属性名"], ["value", "属性值，支持 {{name}} / {{index}}"]]}
-              onChange={(rows) => setForm((current) => ({ ...current, properties: rows }))}
-              emptyRow={{ key: "", value: "" }}
-              readOnly
-              emptyMessage="模板批量部署不使用 OVF 属性"
+          ) : (
+            <CleanupTab
+              inventory={inventory} error={error} destroying={destroying}
+              selectedVmIds={selectedVmIds} onToggleVm={toggleVmSelect} onToggleAll={toggleSelectAllVms}
+              onDestroy={destroySelectedVms}
             />
+          )}
 
-            <VmEditor form={form} setForm={setForm} />
-
-            <div className="field">
-              <label><Layers size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />并发数</label>
-              <select
-                value={form.concurrency ?? 1}
-                onChange={(event) => updateNested(setForm, ["concurrency"], Number(event.target.value))}
-              >
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="hintBox">
-              并发数控制同时运行的 ovftool 进程数量。建议根据 ESXi 主机性能和网络带宽设置，通常 3-5 较合适。
-            </div>
-
-            {conflicts.length > 0 && (
-              <div className="alert alertWarn">
-                <AlertTriangle size={16} />
-                <div>
-                  <strong>以下 VM 名称已存在：</strong>
-                  {conflicts.map((name) => <code key={name}>{name}</code>).reduce((acc, el) => acc === null ? [el] : [...acc, "、", el], null)}
-                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                    <button type="button" className="secondaryAction" onClick={() => setConflicts([])}>返回修改</button>
-                    <button type="button" className="primaryAction" style={{ fontSize: 13, minHeight: 34 }} onClick={forceSubmit}>仍然部署</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {warnings.length > 0 && (
-              <div className="alert alertWarn">
-                <AlertTriangle size={16} />
-                <div>{warnings.map((w, i) => <div key={i}>{w}</div>)}</div>
-              </div>
-            )}
-
-            {error && <div className="alert"><ShieldAlert size={16} />{error}</div>}
-
-            <button className="primaryAction" type="submit" disabled={submitting}>
-              <Play size={18} />
-              {form.dryRun ? "生成部署预览" : "开始批量部署"}
-            </button>
-
-            {inventory && (
-              <section className="nestedSection span2" style={{ borderTopColor: "#f3c8c1" }}>
-                <div className="sectionHeader">
-                  <SectionTitle icon={<Trash2 />} title="虚拟机清理" />
-                  <button
-                    type="button"
-                    className="dangerAction"
-                    disabled={!selectedVmIds.size || destroying}
-                    onClick={destroySelectedVms}
-                  >
-                    <PowerOff size={16} />
-                    {destroying ? "执行中..." : `关机并删除 (${selectedVmIds.size})`}
-                  </button>
-                </div>
-                <div className="hintBox">
-                  勾选要清理的虚拟机，点击"关机并删除"将强制关机后删除。此操作不可撤销。
-                </div>
-                <div className="vmCleanupList">
-                  <label className="vmCleanupRow vmCleanupHeader">
-                    <input
-                      type="checkbox"
-                      checked={(() => {
-                        const vms = inventory?.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
-                        return vms.length > 0 && vms.every((v) => selectedVmIds.has(v.id));
-                      })()}
-                      onChange={toggleSelectAllVms}
-                    />
-                    <span>名称</span>
-                    <span>数据中心</span>
-                    <span>类型</span>
-                  </label>
-                  {inventory.inventoryItems
-                    ?.filter((item) => item.kind === "VM")
-                    .map((item) => (
-                      <label key={item.id} className="vmCleanupRow">
-                        <input
-                          type="checkbox"
-                          checked={selectedVmIds.has(item.id)}
-                          onChange={() => toggleVmSelect(item.id)}
-                        />
-                        <span>{item.name}</span>
-                        <span className="muted">{item.datacenter}</span>
-                        <span className="muted">{item.kind}</span>
-                      </label>
-                    ))}
-                  {!(inventory.inventoryItems?.some((item) => item.kind === "VM")) && (
-                    <div className="hintBox">当前环境中没有普通虚拟机（模板不会显示在这里）。</div>
-                  )}
-                </div>
-              </section>
-            )}
-          </form>
-
-          <JobPanel
-            job={activeJob}
-            onCancel={cancelActiveJob}
-            onRetry={retryActiveJob}
-            onRefresh={refreshJobs}
-          />
+          <JobPanel job={activeJob} onCancel={cancelActiveJob} onRetry={retryActiveJob} onRefresh={refreshJobs} />
         </div>
       </section>
     </main>
+  );
+}
+
+function DeployTab({ form, setForm, inventory, error, submitting, conflicts, warnings, sourceNetworkOptions, onSubmit, onForceSubmit, onResetConnection }) {
+  return (
+    <form className="panel formPanel" onSubmit={onSubmit}>
+      {inventory && (
+        <section className="resourceGrid span2">
+          <ResourceSelect
+            label={form.target.platform === "vcenter" ? "部署目标" : "主机"}
+            value={form.target.inventoryPath}
+            options={inventory.computeTargets}
+            valueKey="inventoryPath"
+            render={(item) => item.datacenter ? `${item.datacenter} / ${item.name}` : item.name}
+            onChange={(v) => updateNested(setForm, ["target", "inventoryPath"], v)}
+            disabled={form.target.platform === "esxi"}
+          />
+          <DatastoreSelect value={form.target.datastore} datastores={inventory.datastores ?? []} onChange={(v) => updateNested(setForm, ["target", "datastore"], v)} />
+          <ResourceSelect
+            label="VM Folder" value={form.target.folder}
+            options={[{ id: "", name: "不指定" }, ...(inventory.folders ?? [])]}
+            valueKey="name"
+            onChange={(v) => updateNested(setForm, ["target", "folder"], v === "不指定" ? "" : v)}
+          />
+          <div className="field">
+            <label>磁盘模式</label>
+            <select value={form.target.diskMode} onChange={(e) => updateNested(setForm, ["target", "diskMode"], e.target.value)}>
+              <option value="thin">thin</option>
+              <option value="thick">thick</option>
+              <option value="eagerZeroedThick">eagerZeroedThick</option>
+            </select>
+          </div>
+        </section>
+      )}
+
+      {!inventory && <div className="hintBox span2">请先在顶部填写地址和账号，点击"连接"后配置部署参数。</div>}
+
+      {inventory && (
+        <>
+          <section className="nestedSection span2">
+            <SectionTitle icon={<Copy />} title="部署源" />
+            <div className="resourceGrid">
+              <ResourceSelect
+                label="模板" value={form.sourceInventoryPath}
+                options={(inventory.inventoryItems ?? []).filter((item) => item.kind === "Template")}
+                valueKey="inventoryPath"
+                render={(item) => `${item.datacenter} / ${item.name}`}
+                onChange={(v) => setForm((c) => applyInventorySourceDefaults({ ...c, sourceInventoryPath: v }, inventory))}
+              />
+              <label className="checkLine">
+                <input type="checkbox" checked={form.target.powerOn} onChange={(e) => updateNested(setForm, ["target", "powerOn"], e.target.checked)} />
+                <Power size={16} /> 部署后开机
+              </label>
+            </div>
+          </section>
+
+          <Repeater
+            icon={<Network />} title="网络映射" rows={form.networkMappings}
+            columns={[["source", "模板源网络"], ["target", "目标 Port Group"]]}
+            selectOptions={{ source: sourceNetworkOptions, target: inventory?.networks?.map((i) => i.name) ?? [] }}
+            onChange={(rows) => setForm((c) => ({ ...c, networkMappings: rows }))}
+            emptyRow={{ source: "", target: "" }}
+          />
+
+          <Repeater
+            icon={<Settings2 />} title="OVF 属性" rows={form.properties}
+            columns={[["key", "属性名"], ["value", "属性值 ({{index}})"]]}
+            onChange={(rows) => setForm((c) => ({ ...c, properties: rows }))}
+            emptyRow={{ key: "", value: "" }} readOnly emptyMessage="模板批量部署不使用 OVF 属性"
+          />
+        </>
+      )}
+
+      <VmEditor form={form} setForm={setForm} />
+
+      <div className="field">
+        <label><Layers size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />并发数</label>
+        <select value={form.concurrency ?? 1} onChange={(e) => updateNested(setForm, ["concurrency"], Number(e.target.value))}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+
+      {conflicts.length > 0 && (
+        <div className="alert alertWarn span2">
+          <AlertTriangle size={16} />
+          <div>
+            <strong>VM 名称冲突：</strong> {conflicts.join("、")}
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button type="button" className="secondaryAction" onClick={() => setConflicts([])}>返回修改</button>
+              <button type="button" className="primaryAction" style={{ fontSize: 13, minHeight: 34 }} onClick={onForceSubmit}>仍然部署</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="alert alertWarn span2">
+          <AlertTriangle size={16} />
+          <div>{warnings.map((w, i) => <div key={i}>{w}</div>)}</div>
+        </div>
+      )}
+
+      {error && <div className="alert span2"><ShieldAlert size={16} />{error}</div>}
+
+      <button className="primaryAction" type="submit" disabled={submitting}>
+        <Play size={18} />
+        {form.dryRun ? "生成部署预览" : "开始批量部署"}
+      </button>
+    </form>
+  );
+}
+
+function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, onToggleAll, onDestroy }) {
+  if (!inventory) {
+    return (
+      <div className="panel emptyPanel">
+        <div className="emptyState"><Server size={32} /><span>请先连接 vSphere 后查看虚拟机列表。</span></div>
+      </div>
+    );
+  }
+  const vms = inventory.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
+  return (
+    <div className="panel formPanel">
+      <div className="sectionHeader span2">
+        <SectionTitle icon={<Trash2 />} title={`虚拟机列表 (${vms.length} 台)`} />
+        <button type="button" className="dangerAction" disabled={!selectedVmIds.size || destroying} onClick={onDestroy}>
+          <PowerOff size={16} />
+          {destroying ? "执行中..." : `关机并删除 (${selectedVmIds.size})`}
+        </button>
+      </div>
+      <div className="hintBox span2">勾选要清理的虚拟机，点击"关机并删除"将强制关机后删除。此操作不可撤销。</div>
+      {error && <div className="alert span2"><ShieldAlert size={16} />{error}</div>}
+      <div className="vmCleanupList span2">
+        <label className="vmCleanupRow vmCleanupHeader">
+          <input type="checkbox" checked={vms.length > 0 && vms.every((v) => selectedVmIds.has(v.id))} onChange={onToggleAll} />
+          <span>名称</span>
+          <span>数据中心</span>
+        </label>
+        {vms.map((item) => (
+          <label key={item.id} className="vmCleanupRow">
+            <input type="checkbox" checked={selectedVmIds.has(item.id)} onChange={() => onToggleVm(item.id)} />
+            <span>{item.name}</span>
+            <span className="muted">{item.datacenter}</span>
+          </label>
+        ))}
+        {vms.length === 0 && <div className="emptyState small"><span>当前环境没有普通虚拟机。</span></div>}
+      </div>
+    </div>
   );
 }
 
@@ -757,15 +685,7 @@ function TextField({ form, setForm, path, label, placeholder = "", type = "text"
       <label>{label}</label>
       <div className="inputWithIcon">
         {icon}
-        <input
-          type={type}
-          value={value}
-          placeholder={placeholder}
-          onChange={(event) => {
-            onChangeExtra?.();
-            updateNested(setForm, path, event.target.value);
-          }}
-        />
+        <input type={type} value={value} placeholder={placeholder} onChange={(e) => { onChangeExtra?.(); updateNested(setForm, path, e.target.value); }} />
       </div>
     </div>
   );
@@ -775,15 +695,11 @@ function ResourceSelect({ label, value, options, valueKey = "id", render = (item
   return (
     <div className="field">
       <label>{label}</label>
-      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled || !options.length}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled || !options.length}>
         {!options.length && <option value="">无可用选项</option>}
         {options.map((item) => {
-          const optionValue = item[valueKey] ?? "";
-          return (
-            <option key={`${label}-${item.id}-${optionValue}`} value={optionValue}>
-              {render(item)}
-            </option>
-          );
+          const v = item[valueKey] ?? "";
+          return <option key={`${label}-${item.id}-${v}`} value={v}>{render(item)}</option>;
         })}
       </select>
     </div>
@@ -794,16 +710,11 @@ function DatastoreSelect({ value, datastores, onChange }) {
   return (
     <div className="field">
       <label><HardDrive size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />Datastore</label>
-      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={!datastores.length}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} disabled={!datastores.length}>
         {!datastores.length && <option value="">无可用选项</option>}
-        {datastores.map((ds) => {
-          const info = ds.freeSpace > 0 ? ` (${formatBytes(ds.freeSpace)} 可用)` : "";
-          return (
-            <option key={ds.id} value={ds.name}>
-              {ds.name}{info}
-            </option>
-          );
-        })}
+        {datastores.map((ds) => (
+          <option key={ds.id} value={ds.name}>{ds.name}{ds.freeSpace > 0 ? ` (${formatBytes(ds.freeSpace)} 可用)` : ""}</option>
+        ))}
       </select>
     </div>
   );
@@ -822,45 +733,22 @@ function Repeater({ icon, title, rows, columns, selectOptions = {}, onChange, em
     <section className="nestedSection span2">
       <div className="sectionHeader">
         <SectionTitle icon={icon} title={title} />
-        <button type="button" className="iconButton" onClick={() => onChange([...rows, emptyRow])} aria-label={`新增${title}`} disabled={readOnly}>
-          <Plus size={17} />
-        </button>
+        <button type="button" className="iconButton" onClick={() => onChange([...rows, emptyRow])} aria-label={`新增${title}`} disabled={readOnly}><Plus size={17} /></button>
       </div>
       {readOnly && !rows.length && <div className="readonlyNotice">{emptyMessage}</div>}
       {safeRows.map((row, index) => (
         <div className="rowEditor" key={index}>
           {columns.map(([key, label]) => (
             selectOptions[key]?.length ? (
-              <select
-                key={key}
-                value={row[key] ?? ""}
-                disabled={readOnly}
-                onChange={(event) => {
-                  const next = [...safeRows];
-                  next[index] = { ...next[index], [key]: event.target.value };
-                  onChange(next);
-                }}
-              >
+              <select key={key} value={row[key] ?? ""} disabled={readOnly} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }}>
                 <option value="">选择{label}</option>
-                {selectOptions[key].map((option) => <option key={option} value={option}>{option}</option>)}
+                {selectOptions[key].map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             ) : (
-              <input
-                key={key}
-                value={row[key] ?? ""}
-                placeholder={label}
-                readOnly={readOnly}
-                onChange={(event) => {
-                  const next = [...safeRows];
-                  next[index] = { ...next[index], [key]: event.target.value };
-                  onChange(next);
-                }}
-              />
+              <input key={key} value={row[key] ?? ""} placeholder={label} readOnly={readOnly} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }} />
             )
           ))}
-          <button type="button" className="iconButton danger" onClick={() => onChange(safeRows.filter((_, rowIndex) => rowIndex !== index))} aria-label={`删除${title}`} disabled={readOnly}>
-            <Trash2 size={17} />
-          </button>
+          <button type="button" className="iconButton danger" onClick={() => onChange(safeRows.filter((_, ri) => ri !== index))} aria-label={`删除${title}`} disabled={readOnly}><Trash2 size={17} /></button>
         </div>
       ))}
     </section>
@@ -875,64 +763,27 @@ function VmEditor({ form, setForm }) {
       <div className="sectionHeader">
         <SectionTitle icon={<Terminal />} title="虚拟机清单" />
         <div className="segmented">
-          <button
-            type="button"
-            className={form.vmNaming.mode === "generated" ? "selected" : ""}
-            onClick={() => updateNested(setForm, ["vmNaming", "mode"], "generated")}
-          >
-            简单生成
-          </button>
-          <button
-            type="button"
-            className={form.vmNaming.mode === "manual" ? "selected" : ""}
-            onClick={() => updateNested(setForm, ["vmNaming", "mode"], "manual")}
-          >
-            手动清单
-          </button>
+          <button type="button" className={form.vmNaming.mode === "generated" ? "selected" : ""} onClick={() => updateNested(setForm, ["vmNaming", "mode"], "generated")}>简单生成</button>
+          <button type="button" className={form.vmNaming.mode === "manual" ? "selected" : ""} onClick={() => updateNested(setForm, ["vmNaming", "mode"], "manual")}>手动清单</button>
         </div>
       </div>
       {form.vmNaming.mode === "generated" ? (
         <>
           <div className="vmGenerator">
-            <div className="field">
-              <label>名称前缀</label>
-              <input value={form.vmNaming.prefix} onChange={(event) => updateNested(setForm, ["vmNaming", "prefix"], event.target.value)} />
-            </div>
-            <div className="field">
-              <label>数量</label>
-              <input type="number" min="1" max="500" value={form.vmNaming.count} onChange={(event) => updateNested(setForm, ["vmNaming", "count"], Number(event.target.value))} />
-            </div>
-            <div className="field">
-              <label>起始编号</label>
-              <input type="number" min="0" value={form.vmNaming.start} onChange={(event) => updateNested(setForm, ["vmNaming", "start"], Number(event.target.value))} />
-            </div>
-            <div className="field">
-              <label>编号位数</label>
-              <input type="number" min="1" max="6" value={form.vmNaming.padding} onChange={(event) => updateNested(setForm, ["vmNaming", "padding"], Number(event.target.value))} />
-            </div>
+            <div className="field"><label>前缀</label><input value={form.vmNaming.prefix} onChange={(e) => updateNested(setForm, ["vmNaming", "prefix"], e.target.value)} /></div>
+            <div className="field"><label>数量</label><input type="number" min="1" max="500" value={form.vmNaming.count} onChange={(e) => updateNested(setForm, ["vmNaming", "count"], Number(e.target.value))} /></div>
+            <div className="field"><label>起始</label><input type="number" min="0" value={form.vmNaming.start} onChange={(e) => updateNested(setForm, ["vmNaming", "start"], Number(e.target.value))} /></div>
+            <div className="field"><label>位数</label><input type="number" min="1" max="6" value={form.vmNaming.padding} onChange={(e) => updateNested(setForm, ["vmNaming", "padding"], Number(e.target.value))} /></div>
           </div>
           <div className="previewList">
             {generatedVms.slice(0, 8).map((vm) => <code key={vm.name}>{vm.name}</code>)}
-            {generatedVms.length > 8 && <code>还有 {generatedVms.length - 8} 台...</code>}
+            {generatedVms.length > 8 && <code>...还有 {generatedVms.length - 8} 台</code>}
           </div>
-          <div className="hintBox">这里设置的是新建虚拟机的名称。比如前缀 openclaw、数量 3、起始 1、位数 2，会生成 openclaw-01 到 openclaw-03。</div>
         </>
       ) : (
         <>
-          <button type="button" className="secondaryAction inlineAction" onClick={() => setForm((current) => ({ ...current, vms: [...current.vms, { ...emptyVm, name: `lab-${current.vms.length + 1}` }] }))}>
-            <Plus size={17} />
-            新增一台
-          </button>
-          <textarea
-            value={csvPreview}
-            onChange={(event) => {
-              const vms = event.target.value.split(/\r?\n/).map((name) => ({ name })).filter((vm) => vm.name.trim());
-              setForm((current) => ({ ...current, vms: vms.length ? vms : [{ ...emptyVm }] }));
-            }}
-            rows={8}
-            spellCheck="false"
-          />
-          <div className="hintBox">一行一个新虚拟机名称。也可以写 {"{{index}}"}，提交时会替换成序号。</div>
+          <textarea value={csvPreview} onChange={(e) => { const vms = e.target.value.split(/\r?\n/).map((n) => ({ name: n })).filter((v) => v.name.trim()); setForm((c) => ({ ...c, vms: vms.length ? vms : [{ ...emptyVm }] })); }} rows={6} spellCheck="false" />
+          <div className="hintBox">一行一个名称，支持 {"{{index}}"} 变量。</div>
         </>
       )}
     </section>
@@ -946,53 +797,31 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
 
   useEffect(() => {
     if (!job) return;
-    if (job.status !== "running" && job.status !== "queued") {
-      setSseLogs([]);
-      setSseStatus(null);
-      return;
-    }
-
-    setSseLogs([]);
-    setSseStatus(null);
+    if (job.status !== "running" && job.status !== "queued") { setSseLogs([]); setSseStatus(null); return; }
+    setSseLogs([]); setSseStatus(null);
     const token = localStorage.getItem("massova.token");
     const url = `/api/jobs/${job.id}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-    const eventSource = new EventSource(url);
-
-    eventSource.addEventListener("log", (event) => {
-      setSseLogs((prev) => [...prev, JSON.parse(event.data)]);
-    });
-
-    eventSource.addEventListener("status", (event) => {
-      setSseStatus(JSON.parse(event.data));
-    });
-
-    eventSource.addEventListener("close", () => {
-      eventSource.close();
-    });
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    return () => {
-      eventSource.close();
-    };
+    const es = new EventSource(url);
+    es.addEventListener("log", (e) => setSseLogs((p) => [...p, JSON.parse(e.data)]));
+    es.addEventListener("status", (e) => setSseStatus(JSON.parse(e.data)));
+    es.addEventListener("close", () => es.close());
+    es.onerror = () => es.close();
+    return () => es.close();
   }, [job?.id, job?.status]);
 
   const allLogs = useMemo(() => {
     const base = job?.logs ?? [];
-    if (sseLogs.length === 0) return base;
-    return [...base, ...sseLogs];
+    return sseLogs.length === 0 ? base : [...base, ...sseLogs];
   }, [job?.logs?.length, sseLogs]);
 
-  useEffect(() => {
-    if (logBoxRef.current) {
-      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
-    }
-  }, [allLogs]);
+  useEffect(() => { if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight; }, [allLogs]);
 
-  const displayStatus = sseStatus?.status ?? job?.status;
-  const displayProgress = sseStatus?.progress ?? job?.progress;
+  const status = sseStatus?.status ?? job?.status;
+  const progress = sseStatus?.progress ?? job?.progress;
+  const completed = progress?.completed ?? 0;
+  const total = progress?.total ?? 0;
+  const failed = progress?.failed ?? 0;
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   function exportLogs() {
     if (!job) return;
@@ -1006,50 +835,21 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
     setTimeout(() => URL.revokeObjectURL(url), 200);
   }
 
-  const completed = displayProgress?.completed ?? 0;
-  const total = displayProgress?.total ?? 0;
-  const failed = displayProgress?.failed ?? 0;
-  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
-
   return (
     <aside className="panel jobPanel">
       <div className="jobHeader">
-        <div>
-          <p>当前任务</p>
-          <h2>{job ? job.id : "暂无任务"}</h2>
-        </div>
+        <div><p>当前任务</p><h2>{job ? job.id : "暂无任务"}</h2></div>
         <div className="actions">
-          {job && (
-            <button className="iconButton" type="button" onClick={exportLogs} aria-label="导出日志" title="导出日志">
-              <Download size={17} />
-            </button>
-          )}
-          <button className="iconButton" type="button" onClick={onRefresh} aria-label="刷新任务">
-            <RefreshCw size={17} />
-          </button>
-          {displayStatus === "running" && (
-            <button className="iconButton danger" type="button" onClick={onCancel} aria-label="取消任务">
-              <XCircle size={17} />
-            </button>
-          )}
-          {displayStatus === "failed" && (
-            <button className="iconButton" type="button" onClick={onRetry} aria-label="重试失败项" title="重试失败项">
-              <RotateCcw size={17} />
-            </button>
-          )}
+          {job && <button className="iconButton" type="button" onClick={exportLogs} aria-label="导出日志"><Download size={17} /></button>}
+          <button className="iconButton" type="button" onClick={onRefresh}><RefreshCw size={17} /></button>
+          {status === "running" && <button className="iconButton danger" type="button" onClick={onCancel}><XCircle size={17} /></button>}
+          {status === "failed" && <button className="iconButton" type="button" onClick={onRetry} title="重试失败项"><RotateCcw size={17} /></button>}
         </div>
       </div>
-
       {job ? (
         <>
-          <div className="statusStrip">
-            <StatusIcon status={displayStatus} />
-            <span>{displayStatus}</span>
-            <strong>{completed}/{total}</strong>
-          </div>
-          <div className="progressBar">
-            <div className="progressFill" style={{ width: `${percent}%` }} />
-          </div>
+          <div className="statusStrip"><StatusIcon status={status} /><span>{status}</span><strong>{completed}/{total}</strong></div>
+          <div className="progressBar"><div className="progressFill" style={{ width: `${percent}%` }} /></div>
           {(completed > 0 || failed > 0) && (
             <div className="progressMeta">
               <span className="ok">{completed} 完成</span>
@@ -1058,13 +858,11 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
             </div>
           )}
           <div className="commandList">
-            {(job.commands ?? []).slice(0, 5).map((command, index) => (
-              <code key={index}>{command}</code>
-            ))}
+            {(job.commands ?? []).slice(0, 3).map((cmd, i) => <code key={i}>{cmd}</code>)}
           </div>
           <div className="logBox" ref={logBoxRef}>
-            {allLogs.map((line, index) => (
-              <div className={`logLine ${line.stream}`} key={`${line.at}-${index}`}>
+            {allLogs.map((line, i) => (
+              <div className={`logLine ${line.stream}`} key={`${line.at}-${i}`}>
                 <time>{new Date(line.at).toLocaleTimeString()}</time>
                 <span>{line.message}</span>
               </div>
@@ -1072,10 +870,7 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
           </div>
         </>
       ) : (
-        <div className="emptyState">
-          <Copy size={24} />
-          <span>提交后会在这里显示 ovftool 命令和执行日志。</span>
-        </div>
+        <div className="emptyState"><Copy size={24} /><span>提交后会在这里显示命令和日志。</span></div>
       )}
     </aside>
   );
@@ -1088,18 +883,11 @@ function StatusIcon({ status }) {
 }
 
 function updateNested(setForm, path, value) {
-  setForm((current) => {
-    const next = structuredClone(current);
-    let cursor = next;
-    for (const key of path.slice(0, -1)) cursor = cursor[key];
-    cursor[path.at(-1)] = value;
-    return next;
-  });
+  setForm((current) => { const next = structuredClone(current); let c = next; for (const k of path.slice(0, -1)) c = c[k]; c[path.at(-1)] = value; return next; });
 }
 
 function getEffectiveVms(form) {
-  if (form.vmNaming?.mode === "manual") return form.vms.filter((vm) => vm.name.trim());
-  return getGeneratedVms(form.vmNaming);
+  return form.vmNaming?.mode === "manual" ? form.vms.filter((vm) => vm.name.trim()) : getGeneratedVms(form.vmNaming);
 }
 
 function getGeneratedVms(vmNaming = {}) {
@@ -1107,31 +895,16 @@ function getGeneratedVms(vmNaming = {}) {
   const count = clampNumber(vmNaming.count, 1, 500);
   const start = clampNumber(vmNaming.start, 0, 999999);
   const padding = clampNumber(vmNaming.padding, 1, 6);
-  return Array.from({ length: count }, (_, index) => {
-    const number = String(start + index).padStart(padding, "0");
-    return { name: `${prefix}-${number}` };
-  });
+  return Array.from({ length: count }, (_, i) => ({ name: `${prefix}-${String(start + i).padStart(padding, "0")}` }));
 }
 
-function clampNumber(value, min, max) {
-  const number = Number.isFinite(Number(value)) ? Number(value) : min;
-  return Math.max(min, Math.min(max, number));
-}
+function clampNumber(v, min, max) { const n = Number.isFinite(Number(v)) ? Number(v) : min; return Math.max(min, Math.min(max, n)); }
 
 function mergeState(base, saved, session) {
   return {
-    ...base,
-    ...saved,
-    sourceType: "inventory",
-    target: {
-      ...base.target,
-      ...(saved.target ?? {}),
-      ...(session.target ?? {})
-    },
-    vmNaming: {
-      ...base.vmNaming,
-      ...(saved.vmNaming ?? {})
-    },
+    ...base, ...saved, sourceType: "inventory",
+    target: { ...base.target, ...(saved.target ?? {}), ...(session.target ?? {}) },
+    vmNaming: { ...base.vmNaming, ...(saved.vmNaming ?? {}) },
     networkMappings: Array.isArray(saved.networkMappings) ? saved.networkMappings : base.networkMappings,
     properties: Array.isArray(saved.properties) ? saved.properties : base.properties,
     vms: Array.isArray(saved.vms) ? saved.vms : base.vms
@@ -1142,43 +915,32 @@ function applyInventoryDefaults(current, inventory) {
   const firstCompute = inventory.computeTargets?.[0];
   const firstDatastore = inventory.datastores?.[0];
   const firstNetwork = inventory.networks?.[0];
-  const datastoreNames = new Set((inventory.datastores ?? []).map((item) => item.name));
-  const networkNames = new Set((inventory.networks ?? []).map((item) => item.name));
+  const dsNames = new Set((inventory.datastores ?? []).map((i) => i.name));
+  const netNames = new Set((inventory.networks ?? []).map((i) => i.name));
   return {
     ...current,
-    sourceInventoryPath: current.sourceInventoryPath || inventory.inventoryItems?.find((item) => item.kind === "Template")?.inventoryPath || "",
+    sourceInventoryPath: current.sourceInventoryPath || inventory.inventoryItems?.find((i) => i.kind === "Template")?.inventoryPath || "",
     target: {
       ...current.target,
       inventoryPath: current.target.inventoryPath || firstCompute?.inventoryPath || "",
-      datastore: datastoreNames.has(current.target.datastore) ? current.target.datastore : firstDatastore?.name || "",
+      datastore: dsNames.has(current.target.datastore) ? current.target.datastore : firstDatastore?.name || "",
       folder: current.target.folder || "",
       resourcePool: current.target.resourcePool || ""
     },
-    networkMappings: current.networkMappings.map((mapping) => ({
-      ...mapping,
-      target: networkNames.has(mapping.target) ? mapping.target : firstNetwork?.name || ""
-    }))
+    networkMappings: current.networkMappings.map((m) => ({ ...m, target: netNames.has(m.target) ? m.target : firstNetwork?.name || "" }))
   };
 }
 
 function applyInventorySourceDefaults(current, inventory) {
-  const source = inventory?.inventoryItems?.find((item) => item.inventoryPath === current.sourceInventoryPath)
-    ?? inventory?.inventoryItems?.find((item) => item.kind === "Template")
-    ?? null;
-  const targetNetworks = new Set((inventory?.networks ?? []).map((item) => item.name));
-  const firstTargetNetwork = inventory?.networks?.[0]?.name ?? "";
-  const sourceNetworks = source?.sourceNetworks?.length ? source.sourceNetworks : current.networkMappings.map((mapping) => mapping.source).filter(Boolean);
-  const networkMappings = sourceNetworks.length
-    ? sourceNetworks.map((sourceNetwork) => ({
-      source: sourceNetwork,
-      target: targetNetworks.has(sourceNetwork) ? sourceNetwork : firstTargetNetwork
-    }))
-    : current.networkMappings;
-
+  const source = inventory?.inventoryItems?.find((i) => i.inventoryPath === current.sourceInventoryPath)
+    ?? inventory?.inventoryItems?.find((i) => i.kind === "Template") ?? null;
+  const targetNets = new Set((inventory?.networks ?? []).map((i) => i.name));
+  const firstNet = inventory?.networks?.[0]?.name ?? "";
+  const srcNets = source?.sourceNetworks?.length ? source.sourceNetworks : current.networkMappings.map((m) => m.source).filter(Boolean);
   return {
     ...current,
     sourceInventoryPath: source?.inventoryPath ?? current.sourceInventoryPath,
-    networkMappings
+    networkMappings: srcNets.length ? srcNets.map((s) => ({ source: s, target: targetNets.has(s) ? s : firstNet })) : current.networkMappings
   };
 }
 
