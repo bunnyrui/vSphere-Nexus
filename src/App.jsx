@@ -127,9 +127,9 @@ const Dashboard = () => {
 const LoginPage = () => {
   const { isAuthenticated, setToken, authEnabled } = useAuthStore();
   const { target, setTarget, setInventory } = useAppStore();
-  const [host, setHost] = React.useState(target.host || '172.16.109.250');
+  const [host, setHost] = React.useState(target.host || '');
   const [platform, setPlatform] = React.useState(target.platform || 'vcenter');
-  const [username, setUsername] = React.useState(target.username || 'administrator@vsphere.local');
+  const [username, setUsername] = React.useState(target.username || '');
   const [password, setPassword] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
