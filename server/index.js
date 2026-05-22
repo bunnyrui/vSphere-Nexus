@@ -547,6 +547,7 @@ app.get("/api/jobs/:id/events", (req, res) => {
 
   let lastLogIndex = 0;
   let closed = false;
+  let heartbeatCounter = 0;
 
   const interval = setInterval(() => {
     const current = getJob(req.params.id);
@@ -563,6 +564,10 @@ app.get("/api/jobs/:id/events", (req, res) => {
       }
     }
     res.write(`event: status\ndata: ${JSON.stringify({ status: current.status, progress: current.progress })}\n\n`);
+    heartbeatCounter++;
+    if (heartbeatCounter % 15 === 0) {
+      res.write(': heartbeat\n\n');
+    }
     if (current.status !== "running" && current.status !== "queued") {
       clearInterval(interval);
       res.write(`event: close\ndata: {}\n\n`);
