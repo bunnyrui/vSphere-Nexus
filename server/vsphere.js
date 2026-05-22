@@ -1,9 +1,5 @@
 const VIM_NS = "urn:vim25";
 
-import { Agent } from "undici";
-
-const insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
-
 const sessionCache = new Map();
 
 function sessionKey(target) {
@@ -164,22 +160,31 @@ async function retrieveInventory(target, cookie, rootFolder, propertyCollector) 
 }
 
 async function soap(host, body, cookie = "") {
-  const response = await fetch(`https://${host}/sdk`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: `"${VIM_NS}/8.0.3.0"`,
-      ...(cookie ? { Cookie: cookie } : {})
-    },
-    body,
-    dispatcher: insecureDispatcher
-  });
-  const text = await response.text();
-  const setCookie = response.headers.get("set-cookie") ?? "";
-  return {
-    text,
-    cookie: setCookie.split(";")[0]
-  };
+  const savedTls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  try {
+    const response = await fetch(`https://${host}/sdk`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: `"${VIM_NS}/8.0.3.0"`,
+        ...(cookie ? { Cookie: cookie } : {})
+      },
+      body
+    });
+    const text = await response.text();
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    return {
+      text,
+      cookie: setCookie.split(";")[0]
+    };
+  } finally {
+    if (savedTls === undefined) {
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    } else {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = savedTls;
+    }
+  }
 }
 
 function normalizeInventory(target, objects) {
