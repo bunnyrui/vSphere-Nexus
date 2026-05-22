@@ -70,8 +70,23 @@ function decryptPayload(payload) {
 const jobs = new Map();
 const controllers = new Map();
 const payloads = new Map();
+const JOB_MAX_AGE = 24 * 60 * 60 * 1000;
 let saveTimer = null;
 let savePending = false;
+
+function purgeExpiredJobs() {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (controllers.has(id)) continue;
+    const terminalStates = ["succeeded", "failed", "cancelled", "interrupted"];
+    if (terminalStates.includes(job.status) && job.finishedAt) {
+      if (now - new Date(job.finishedAt).getTime() > JOB_MAX_AGE) {
+        jobs.delete(id);
+        payloads.delete(id);
+      }
+    }
+  }
+}
 
 export async function initStore() {
   await getEncryptionKey();
@@ -99,6 +114,7 @@ export async function initStore() {
     }
   } catch {
   }
+  purgeExpiredJobs();
   scheduleSave();
 }
 
