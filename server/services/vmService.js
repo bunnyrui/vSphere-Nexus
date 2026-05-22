@@ -275,14 +275,10 @@ export class VmService {
   }
 
   async checkVmNameConflicts(vmNames) {
-    try {
-      const inventory = await this.discoverInventory();
-      const vms = (inventory.inventoryItems ?? []).filter((item) => item.kind === "VM");
-      const existingNames = new Set(vms.map((item) => item.name));
-      return vmNames.filter((name) => existingNames.has(name));
-    } catch {
-      return [];
-    }
+    const inventory = await this.discoverInventory();
+    const vms = (inventory.inventoryItems ?? []).filter((item) => item.kind === "VM");
+    const existingNames = new Set(vms.map((item) => item.name));
+    return vmNames.filter((name) => existingNames.has(name));
   }
 
   normalizeInventory(objects) {
