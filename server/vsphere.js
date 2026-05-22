@@ -104,7 +104,7 @@ async function retrieveInventory(target, cookie, rootFolder, propertyCollector) 
         <propSet><type>Datastore</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.type</pathSet></propSet>
         <propSet><type>Network</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
         <propSet><type>DistributedVirtualPortgroup</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
-        <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet><pathSet>summary.storage.committed</pathSet><pathSet>config.createDate</pathSet></propSet>
+        <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet><pathSet>summary.storage.committed</pathSet><pathSet>config.createDate</pathSet><pathSet>runtime.powerState</pathSet><pathSet>config.hardware.numCPU</pathSet><pathSet>config.hardware.memoryMB</pathSet><pathSet>guest.ipAddress</pathSet><pathSet>guest.guestFullName</pathSet></propSet>
         <objectSet>
           ${ref("obj", rootFolder)}
           <skip>false</skip>
@@ -359,6 +359,11 @@ function normalizeInventory(target, objects) {
     const name = object.props.name?.[0] ?? object.id;
     const storageCommitted = parseNumber(object.props["summary.storage.committed"]?.[0]);
     const createdAt = object.props["config.createDate"]?.[0] ?? null;
+    const powerState = object.props["runtime.powerState"]?.[0] ?? "unknown";
+    const numCPU = parseNumber(object.props["config.hardware.numCPU"]?.[0]);
+    const memoryMB = parseNumber(object.props["config.hardware.memoryMB"]?.[0]);
+    const ipAddress = object.props["guest.ipAddress"]?.[0] ?? "";
+    const guestOS = object.props["guest.guestFullName"]?.[0] ?? "";
     return {
       id: object.id,
       name,
@@ -371,7 +376,12 @@ function normalizeInventory(target, objects) {
         .map(toOption))
         .map((network) => network.name),
       storageCommitted,
-      createdAt
+      createdAt,
+      powerState,
+      numCPU,
+      memoryMB,
+      ipAddress,
+      guestOS
     };
   }).filter((item) => item.inventoryPath);
 

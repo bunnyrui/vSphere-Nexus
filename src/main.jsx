@@ -6,11 +6,13 @@ import {
   Bookmark,
   CheckCircle2,
   Copy,
+  Cpu,
   Download,
   HardDrive,
   KeyRound,
   Layers,
   LogIn,
+  MemoryStick,
   Network,
   Play,
   Plus,
@@ -18,6 +20,7 @@ import {
   PowerOff,
   RefreshCw,
   RotateCcw,
+  Search,
   Server,
   Settings2,
   ShieldAlert,
@@ -501,6 +504,9 @@ function App() {
           <button className={activeTab === "deploy" ? "tab active" : "tab"} onClick={() => setActiveTab("deploy")}>
             <Play size={15} /> 批量部署
           </button>
+          <button className={activeTab === "overview" ? "tab active" : "tab"} onClick={() => setActiveTab("overview")}>
+            <Server size={15} /> 虚拟机概览
+          </button>
           <button className={activeTab === "cleanup" ? "tab active" : "tab"} onClick={() => setActiveTab("cleanup")}>
             <Trash2 size={15} /> 虚拟机清理
           </button>
@@ -518,6 +524,8 @@ function App() {
               submitting={submitting} conflicts={conflicts} warnings={warnings} sourceNetworkOptions={sourceNetworkOptions}
               onSubmit={submitDeployment} onForceSubmit={forceSubmit} onResetConnection={resetConnection}
             />
+          ) : activeTab === "overview" ? (
+            <OverviewTab inventory={inventory} />
           ) : (
             <CleanupTab
               inventory={inventory} error={error} destroying={destroying}
@@ -698,6 +706,147 @@ function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, o
           </label>
         ))}
         {vms.length === 0 && <div className="emptyState small"><span>当前环境没有普通虚拟机。</span></div>}
+      </div>
+    </div>
+  );
+}
+
+function OverviewTab({ inventory }) {
+  const [sortKey, setSortKey] = useState("name");
+  const [sortAsc, setSortAsc] = useState(true);
+  const [searchText, setSearchText] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  if (!inventory) {
+    return (
+      <div className="panel emptyPanel">
+        <div className="emptyState"><Server size={32} /><span>请先连接 vSphere 后查看虚拟机概览。</span></div>
+      </div>
+    );
+  }
+
+  const allVms = inventory.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
+  const poweredOn = allVms.filter((v) => v.powerState === "poweredOn").length;
+  const poweredOff = allVms.filter((v) => v.powerState === "poweredOff").length;
+  const totalCPU = allVms.reduce((s, v) => s + (v.numCPU || 0), 0);
+  const totalMemoryMB = allVms.reduce((s, v) => s + (v.memoryMB || 0), 0);
+  const totalStorage = allVms.reduce((s, v) => s + (v.storageCommitted || 0), 0);
+
+  const filtered = allVms.filter((vm) => {
+    if (filterStatus === "poweredOn" && vm.powerState !== "poweredOn") return false;
+    if (filterStatus === "poweredOff" && vm.powerState !== "poweredOff") return false;
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      return vm.name.toLowerCase().includes(q)
+        || vm.ipAddress?.toLowerCase().includes(q)
+        || vm.datacenter?.toLowerCase().includes(q)
+        || vm.guestOS?.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const vms = [...filtered].sort((a, b) => {
+    let cmp = 0;
+    if (sortKey === "name") cmp = a.name.localeCompare(b.name);
+    else if (sortKey === "createdAt") cmp = (a.createdAt || "").localeCompare(b.createdAt || "");
+    else if (sortKey === "powerState") cmp = (a.powerState || "").localeCompare(b.powerState || "");
+    else if (sortKey === "numCPU") cmp = (a.numCPU || 0) - (b.numCPU || 0);
+    else if (sortKey === "memoryMB") cmp = (a.memoryMB || 0) - (b.memoryMB || 0);
+    else if (sortKey === "storageCommitted") cmp = (a.storageCommitted || 0) - (b.storageCommitted || 0);
+    else if (sortKey === "ipAddress") cmp = (a.ipAddress || "").localeCompare(b.ipAddress || "");
+    return sortAsc ? cmp : -cmp;
+  });
+
+  function toggleSort(key) {
+    if (sortKey === key) setSortAsc((a) => !a);
+    else { setSortKey(key); setSortAsc(true); }
+  }
+
+  function formatCreatedAt(iso) {
+    if (!iso) return "-";
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+
+  function powerLabel(state) {
+    if (state === "poweredOn") return "运行中";
+    if (state === "poweredOff") return "已关机";
+    if (state === "suspended") return "已挂起";
+    return state || "未知";
+  }
+
+  return (
+    <div className="panel formPanel">
+      <div className="sectionHeader span2">
+        <SectionTitle icon={<Server />} title={`虚拟机概览 (${allVms.length} 台)`} />
+      </div>
+
+      <div className="overviewStats span2">
+        <div className="overviewStat">
+          <span className="overviewStatLabel">总 VM</span>
+          <strong>{allVms.length}</strong>
+        </div>
+        <div className="overviewStat ok">
+          <span className="overviewStatLabel">运行中</span>
+          <strong>{poweredOn}</strong>
+        </div>
+        <div className="overviewStat bad">
+          <span className="overviewStatLabel">已关机</span>
+          <strong>{poweredOff}</strong>
+        </div>
+        <div className="overviewStat">
+          <span className="overviewStatLabel"><Cpu size={13} style={{ verticalAlign: "middle", marginRight: 3 }} />总 CPU</span>
+          <strong>{totalCPU} 核</strong>
+        </div>
+        <div className="overviewStat">
+          <span className="overviewStatLabel"><MemoryStick size={13} style={{ verticalAlign: "middle", marginRight: 3 }} />总内存</span>
+          <strong>{totalMemoryMB >= 1024 ? `${(totalMemoryMB / 1024).toFixed(1)} GB` : `${totalMemoryMB} MB`}</strong>
+        </div>
+        <div className="overviewStat">
+          <span className="overviewStatLabel"><HardDrive size={13} style={{ verticalAlign: "middle", marginRight: 3 }} />总存储</span>
+          <strong>{formatBytes(totalStorage)}</strong>
+        </div>
+      </div>
+
+      <div className="overviewFilters span2">
+        <div className="inputWithIcon">
+          <Search size={16} />
+          <input placeholder="搜索名称、IP、数据中心、操作系统..." value={searchText} onChange={(e) => setSearchText(e.target.value)} />
+        </div>
+        <div className="segmented">
+          <button type="button" className={filterStatus === "all" ? "selected" : ""} onClick={() => setFilterStatus("all")}>全部</button>
+          <button type="button" className={filterStatus === "poweredOn" ? "selected" : ""} onClick={() => setFilterStatus("poweredOn")}>运行中</button>
+          <button type="button" className={filterStatus === "poweredOff" ? "selected" : ""} onClick={() => setFilterStatus("poweredOff")}>已关机</button>
+        </div>
+      </div>
+
+      <div className="vmOverviewList span2">
+        <div className="vmOverviewRow vmOverviewHeader">
+          <span className="sortableHeader" onClick={() => toggleSort("name")}>名称 {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}</span>
+          <span className="sortableHeader" onClick={() => toggleSort("powerState")}>状态 {sortKey === "powerState" ? (sortAsc ? "▲" : "▼") : ""}</span>
+          <span className="sortableHeader" onClick={() => toggleSort("ipAddress")}>IP 地址 {sortKey === "ipAddress" ? (sortAsc ? "▲" : "▼") : ""}</span>
+          <span className="sortableHeader" onClick={() => toggleSort("numCPU")}>CPU {sortKey === "numCPU" ? (sortAsc ? "▲" : "▼") : ""}</span>
+          <span className="sortableHeader" onClick={() => toggleSort("memoryMB")}>内存 {sortKey === "memoryMB" ? (sortAsc ? "▲" : "▼") : ""}</span>
+          <span className="sortableHeader" onClick={() => toggleSort("storageCommitted")}>存储 {sortKey === "storageCommitted" ? (sortAsc ? "▲" : "▼") : ""}</span>
+          <span>操作系统</span>
+          <span className="sortableHeader" onClick={() => toggleSort("createdAt")}>创建时间 {sortKey === "createdAt" ? (sortAsc ? "▲" : "▼") : ""}</span>
+        </div>
+        {vms.map((item) => (
+          <div key={item.id} className="vmOverviewRow">
+            <span className="vmName">{item.name}</span>
+            <span>
+              <span className={`powerBadge ${item.powerState === "poweredOn" ? "on" : item.powerState === "poweredOff" ? "off" : ""}`}>
+                {powerLabel(item.powerState)}
+              </span>
+            </span>
+            <span className={item.ipAddress ? "" : "muted"}>{item.ipAddress || "-"}</span>
+            <span>{item.numCPU || "-"} 核</span>
+            <span>{item.memoryMB ? (item.memoryMB >= 1024 ? `${(item.memoryMB / 1024).toFixed(1)} GB` : `${item.memoryMB} MB`) : "-"}</span>
+            <span>{formatBytes(item.storageCommitted)}</span>
+            <span className="muted osCell" title={item.guestOS}>{item.guestOS || "-"}</span>
+            <span className="muted">{formatCreatedAt(item.createdAt)}</span>
+          </div>
+        ))}
+        {vms.length === 0 && <div className="emptyState small"><span>没有匹配的虚拟机。</span></div>}
       </div>
     </div>
   );
