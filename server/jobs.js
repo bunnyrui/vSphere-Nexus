@@ -127,7 +127,7 @@ function scheduleSave() {
   }, 500);
 }
 
-async function saveToDisk() {
+export async function saveToDisk() {
   try {
     await mkdir(dataDir, { recursive: true });
     const entries = [...jobs.values()].sort(

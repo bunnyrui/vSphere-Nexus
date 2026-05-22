@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { WebSocketServer, WebSocket } from "ws";
 import tls from "node:tls";
-import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob, createSnapshotJob, deleteJob } from "./jobs.js";
+import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob, createSnapshotJob, deleteJob, saveToDisk } from "./jobs.js";
 import { resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
 import { VmService } from "./services/vmService.js";
 import http from "node:http";
@@ -605,6 +605,20 @@ async function start() {
 }
 
 start();
+
+function gracefulShutdown() {
+  console.log("正在优雅关闭...");
+  saveToDisk().then(() => {
+    server.close(() => {
+      console.log("服务器已关闭");
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5000);
+  }).catch(() => process.exit(1));
+}
+
+process.on("SIGTERM", gracefulShutdown);
+process.on("SIGINT", gracefulShutdown);
 
 // --- Validation Logic ---
 
