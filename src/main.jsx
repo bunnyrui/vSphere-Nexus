@@ -643,6 +643,9 @@ function DeployTab({ form, setForm, inventory, error, submitting, conflicts, war
 }
 
 function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, onToggleAll, onDestroy }) {
+  const [sortKey, setSortKey] = useState("name");
+  const [sortAsc, setSortAsc] = useState(true);
+
   if (!inventory) {
     return (
       <div className="panel emptyPanel">
@@ -650,7 +653,24 @@ function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, o
       </div>
     );
   }
-  const vms = inventory.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
+  const rawVms = inventory.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
+  const vms = [...rawVms].sort((a, b) => {
+    let cmp = 0;
+    if (sortKey === "name") cmp = a.name.localeCompare(b.name);
+    else if (sortKey === "createdAt") cmp = (a.createdAt || "").localeCompare(b.createdAt || "");
+    return sortAsc ? cmp : -cmp;
+  });
+
+  function toggleSort(key) {
+    if (sortKey === key) setSortAsc((a) => !a);
+    else { setSortKey(key); setSortAsc(true); }
+  }
+
+  function formatCreatedAt(iso) {
+    if (!iso) return "-";
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+
   return (
     <div className="panel formPanel">
       <div className="sectionHeader span2">
@@ -660,19 +680,21 @@ function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, o
           {destroying ? "执行中..." : `关机并删除 (${selectedVmIds.size})`}
         </button>
       </div>
-      <div className="hintBox span2">勾选要清理的虚拟机，点击"关机并删除"将强制关机后删除。此操作不可撤销。</div>
+      <div className="hintBox span2">勾选要清理的虚拟机，点击"关机并删除"将强制关机后删除。此操作不可撤销。点击列标题排序。</div>
       {error && <div className="alert span2"><ShieldAlert size={16} />{error}</div>}
       <div className="vmCleanupList span2">
-        <label className="vmCleanupRow vmCleanupHeader">
-          <input type="checkbox" checked={vms.length > 0 && vms.every((v) => selectedVmIds.has(v.id))} onChange={onToggleAll} />
-          <span>名称</span>
+        <div className="vmCleanupRow vmCleanupHeader">
+          <input type="checkbox" checked={rawVms.length > 0 && rawVms.every((v) => selectedVmIds.has(v.id))} onChange={onToggleAll} />
+          <span className="sortableHeader" onClick={() => toggleSort("name")}>名称 {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}</span>
           <span>数据中心</span>
-        </label>
+          <span className="sortableHeader" onClick={() => toggleSort("createdAt")}>创建时间 {sortKey === "createdAt" ? (sortAsc ? "▲" : "▼") : ""}</span>
+        </div>
         {vms.map((item) => (
           <label key={item.id} className="vmCleanupRow">
             <input type="checkbox" checked={selectedVmIds.has(item.id)} onChange={() => onToggleVm(item.id)} />
             <span>{item.name}</span>
             <span className="muted">{item.datacenter}</span>
+            <span className="muted">{formatCreatedAt(item.createdAt)}</span>
           </label>
         ))}
         {vms.length === 0 && <div className="emptyState small"><span>当前环境没有普通虚拟机。</span></div>}

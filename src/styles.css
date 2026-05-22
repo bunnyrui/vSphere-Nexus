@@ -367,7 +367,7 @@ textarea {
 
 .vmCleanupRow {
   display: grid;
-  grid-template-columns: 32px 1fr 120px;
+  grid-template-columns: 32px 1fr 100px 160px;
   gap: 8px;
   align-items: center;
   padding: 8px 12px;
@@ -384,7 +384,16 @@ textarea {
   background: #f7fafc;
   font-weight: 600;
   color: #52616f;
+}
+
+.sortableHeader {
   cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortableHeader:hover {
+  color: #16a085;
 }
 
 .vmCleanupRow .muted {

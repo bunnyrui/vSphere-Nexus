@@ -104,7 +104,7 @@ async function retrieveInventory(target, cookie, rootFolder, propertyCollector) 
         <propSet><type>Datastore</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.type</pathSet></propSet>
         <propSet><type>Network</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
         <propSet><type>DistributedVirtualPortgroup</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
-        <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet><pathSet>summary.storage.committed</pathSet></propSet>
+        <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet><pathSet>summary.storage.committed</pathSet><pathSet>config.createDate</pathSet></propSet>
         <objectSet>
           ${ref("obj", rootFolder)}
           <skip>false</skip>
@@ -358,6 +358,7 @@ function normalizeInventory(target, objects) {
     const folderParts = folderPathParts(objects, object.props.parent?.[0]?.id, datacenter);
     const name = object.props.name?.[0] ?? object.id;
     const storageCommitted = parseNumber(object.props["summary.storage.committed"]?.[0]);
+    const createdAt = object.props["config.createDate"]?.[0] ?? null;
     return {
       id: object.id,
       name,
@@ -369,7 +370,8 @@ function normalizeInventory(target, objects) {
         .filter(Boolean)
         .map(toOption))
         .map((network) => network.name),
-      storageCommitted
+      storageCommitted,
+      createdAt
     };
   }).filter((item) => item.inventoryPath);
 
