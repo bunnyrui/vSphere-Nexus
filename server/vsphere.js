@@ -1,8 +1,8 @@
 const VIM_NS = "urn:vim25";
 
-import { Agent } from "node:https";
+import { Agent } from "undici";
 
-const insecureAgent = new Agent({ rejectUnauthorized: false });
+const insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
 
 const sessionCache = new Map();
 
@@ -172,7 +172,7 @@ async function soap(host, body, cookie = "") {
       ...(cookie ? { Cookie: cookie } : {})
     },
     body,
-    agent: insecureAgent
+    dispatcher: insecureDispatcher
   });
   const text = await response.text();
   const setCookie = response.headers.get("set-cookie") ?? "";
