@@ -22,7 +22,6 @@ import {
   RotateCcw,
   Search,
   Server,
-  Settings2,
   ShieldAlert,
   Terminal,
   Trash2,
@@ -34,7 +33,6 @@ const emptyVm = { name: "lab-{{index}}" };
 const defaultState = {
   dryRun: true,
   concurrency: 1,
-  sourceType: "inventory",
   sourceInventoryPath: "",
   vmNaming: {
     mode: "generated",
@@ -474,9 +472,9 @@ function App() {
         <div className="contentGrid">
           {activeTab === "deploy" ? (
             <DeployTab
-              form={form} setForm={setForm} inventory={inventory} error={error} setError={setError}
-              submitting={submitting} conflicts={conflicts} warnings={warnings} sourceNetworkOptions={sourceNetworkOptions}
-              onSubmit={submitDeployment} onForceSubmit={forceSubmit} onResetConnection={resetConnection}
+              form={form} setForm={setForm} inventory={inventory} error={error}
+              submitting={submitting} conflicts={conflicts} setConflicts={setConflicts} warnings={warnings} sourceNetworkOptions={sourceNetworkOptions}
+              onSubmit={submitDeployment} onForceSubmit={forceSubmit}
             />
           ) : (
             <OverviewTab
@@ -493,7 +491,7 @@ function App() {
   );
 }
 
-function DeployTab({ form, setForm, inventory, error, submitting, conflicts, warnings, sourceNetworkOptions, onSubmit, onForceSubmit, onResetConnection }) {
+function DeployTab({ form, setForm, inventory, error, submitting, conflicts, setConflicts, warnings, sourceNetworkOptions, onSubmit, onForceSubmit }) {
   return (
     <form className="panel formPanel" onSubmit={onSubmit}>
       {inventory && (
@@ -552,13 +550,6 @@ function DeployTab({ form, setForm, inventory, error, submitting, conflicts, war
             selectOptions={{ source: sourceNetworkOptions, target: inventory?.networks?.map((i) => i.name) ?? [] }}
             onChange={(rows) => setForm((c) => ({ ...c, networkMappings: rows }))}
             emptyRow={{ source: "", target: "" }}
-          />
-
-          <Repeater
-            icon={<Settings2 />} title="OVF 属性" rows={form.properties}
-            columns={[["key", "属性名"], ["value", "属性值 ({{index}})"]]}
-            onChange={(rows) => setForm((c) => ({ ...c, properties: rows }))}
-            emptyRow={{ key: "", value: "" }} readOnly emptyMessage="模板批量部署不使用 OVF 属性"
           />
         </>
       )}
@@ -1134,7 +1125,7 @@ function clampNumber(v, min, max) { const n = Number.isFinite(Number(v)) ? Numbe
 
 function mergeState(base, saved, session) {
   return {
-    ...base, ...saved, sourceType: "inventory",
+    ...base, ...saved,
     target: { ...base.target, ...(saved.target ?? {}), ...(session.target ?? {}) },
     vmNaming: { ...base.vmNaming, ...(saved.vmNaming ?? {}) },
     networkMappings: Array.isArray(saved.networkMappings) ? saved.networkMappings : base.networkMappings,

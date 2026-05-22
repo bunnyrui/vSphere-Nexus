@@ -7,3 +7,5 @@ bin/win32/ovftool.exe
 bin/win32/*.dll
 .DS_Store
 *.log
+.env
+.env.*

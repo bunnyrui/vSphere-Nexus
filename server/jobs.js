@@ -108,11 +108,6 @@ function scheduleSave() {
   }, 500);
 }
 
-function scheduleSaveImmediate() {
-  savePending = true;
-  saveToDisk();
-}
-
 async function saveToDisk() {
   try {
     await mkdir(dataDir, { recursive: true });

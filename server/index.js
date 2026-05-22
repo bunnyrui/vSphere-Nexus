@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob } from "./jobs.js";
-import { makeViUrl, runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
+import { runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
 import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
 
 const app = express();
@@ -187,8 +187,7 @@ app.get("/api/jobs/:id/events", (req, res) => {
 
     if (!safeWrite(`event: status\ndata: ${JSON.stringify({
       status: current.status,
-      progress: current.progress,
-      vmResults: current.vmResults
+      progress: current.progress
     })}\n\n`)) {
       clearInterval(interval);
       closed = true;
@@ -319,29 +318,6 @@ app.post("/api/deployments", async (req, res) => {
   res.status(201).json({ job });
 });
 
-app.post("/api/targets/probe", async (req, res) => {
-  const target = normalizeTarget(req.body?.target ?? {});
-  const errors = validateTarget(target);
-  if (errors.length) return res.status(400).json({ errors });
-
-  const result = await runOvfTool(["--noSSLVerify", "--machineOutput", makeViUrl(target, true)], {
-    onLine: undefined
-  });
-
-  const output = `${result.stdout}\n${result.stderr}`;
-  const completions = parseCompletions(output);
-  const authenticated = result.code === 0 || completions.length > 0 || /Found wrong kind of object/i.test(output);
-
-  res.json({
-    ok: authenticated,
-    code: result.code,
-    completions,
-    message: authenticated
-      ? "连接成功，已读取到 vSphere inventory"
-      : sanitizeProbeOutput(output).slice(0, 1200)
-  });
-});
-
 app.post("/api/targets/discover", async (req, res) => {
   const target = normalizeTarget(req.body?.target ?? {});
   const errors = validateConnectionTarget(target);
@@ -467,7 +443,6 @@ function normalizeDeployment(body) {
   return {
     dryRun: body.dryRun !== false,
     concurrency: Number(body.concurrency) || 1,
-    sourceType: "inventory",
     sourceInventoryPath: String(body.sourceInventoryPath ?? "").trim(),
     target: normalizeTarget(body.target ?? {}),
     networkMappings: (body.networkMappings ?? []).filter((item) => item.source || item.target),
@@ -528,19 +503,6 @@ function validateConnectionTarget(target) {
   if (!target.username) errors.push("需要填写用户名");
   if (!target.password) errors.push("需要填写密码");
   return errors;
-}
-
-function parseCompletions(output) {
-  const match = output.match(/Possible completions are:\s*([\s\S]*?)<\/LocalizedMsg>/i);
-  if (!match) return [];
-  return match[1]
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\+\s*/, "").trim())
-    .filter(Boolean);
-}
-
-function sanitizeProbeOutput(output) {
-  return output.replace(/vi:\/\/([^:]+):([^@]+)@/g, "vi://$1:***@");
 }
 
 function formatBytes(bytes) {

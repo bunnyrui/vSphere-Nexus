@@ -7,7 +7,7 @@ import { platform } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export async function fileExists(path) {
+async function fileExists(path) {
   try {
     await access(path, constants.R_OK);
     return true;
@@ -16,7 +16,7 @@ export async function fileExists(path) {
   }
 }
 
-export function maskSecret(value = "") {
+function maskSecret(value = "") {
   if (!value) return "";
   if (value.length <= 2) return "**";
   return `${value.slice(0, 1)}${"*".repeat(Math.min(value.length - 1, 10))}`;
