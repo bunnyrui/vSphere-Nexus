@@ -8,6 +8,22 @@ bin/linux/*
 bin/win32/*
 !bin/win32/.gitkeep
 .DS_Store
+Thumbs.db
 *.log
 .env
-.env.*
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test
+coverage/
+.nyc_output/
+
+# Vite
+*.local

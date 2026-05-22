@@ -11,6 +11,10 @@
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js"
   },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "dependencies": {
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
