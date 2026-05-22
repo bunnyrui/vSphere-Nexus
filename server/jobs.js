@@ -22,7 +22,7 @@ async function getEncryptionKey() {
   } catch {
     encryptionKey = randomBytes(32);
     await mkdir(dataDir, { recursive: true });
-    await writeFile(ENCRYPTION_KEY_FILE, encryptionKey);
+    await writeFile(ENCRYPTION_KEY_FILE, encryptionKey, { mode: 0o600 });
   }
   return encryptionKey;
 }
