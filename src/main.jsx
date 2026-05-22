@@ -152,8 +152,6 @@ function App() {
   const [warnings, setWarnings] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [datastoreInfo, setDatastoreInfo] = useState(null);
-  const [selectedVmIds, setSelectedVmIds] = useState(new Set());
-  const [destroying, setDestroying] = useState(false);
   const [activeTab, setActiveTab] = useState("deploy");
 
   const activeJob = jobs.find((job) => job.id === activeJobId) ?? jobs[0];
@@ -358,45 +356,6 @@ function App() {
     setDatastoreInfo(null);
   }
 
-  function toggleVmSelect(vmId) {
-    setSelectedVmIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(vmId)) next.delete(vmId); else next.add(vmId);
-      return next;
-    });
-  }
-
-  function toggleSelectAllVms() {
-    const vms = inventory?.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
-    if (selectedVmIds.size === vms.length && vms.length > 0) setSelectedVmIds(new Set());
-    else setSelectedVmIds(new Set(vms.map((v) => v.id)));
-  }
-
-  async function destroySelectedVms() {
-    if (!selectedVmIds.size) return;
-    const names = (inventory?.inventoryItems ?? []).filter((item) => selectedVmIds.has(item.id)).map((item) => item.name);
-    if (!confirm(`确认关机并删除以下 ${names.length} 台虚拟机？\n\n${names.slice(0, 10).join("\n")}${names.length > 10 ? `\n...还有 ${names.length - 10} 台` : ""}`)) return;
-    setDestroying(true);
-    setError("");
-    try {
-      const response = await fetch("/api/vms/destroy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ target: form.target, vmIds: [...selectedVmIds] })
-      });
-      if (response.status === 401) { setAuthed(false); return; }
-      const data = await response.json();
-      if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
-      setActiveJobId(data.job.id);
-      setSelectedVmIds(new Set());
-      await refreshJobs();
-    } catch (err) {
-      setError(err.message || "销毁失败");
-    } finally {
-      setDestroying(false);
-    }
-  }
-
   return (
     <main className="shell">
       <aside className="sidebar">
@@ -507,9 +466,6 @@ function App() {
           <button className={activeTab === "overview" ? "tab active" : "tab"} onClick={() => setActiveTab("overview")}>
             <Server size={15} /> 虚拟机概览
           </button>
-          <button className={activeTab === "cleanup" ? "tab active" : "tab"} onClick={() => setActiveTab("cleanup")}>
-            <Trash2 size={15} /> 虚拟机清理
-          </button>
           <div className="tabSpacer" />
           <label className="switch small">
             <input type="checkbox" checked={form.dryRun} onChange={(e) => setForm((c) => ({ ...c, dryRun: e.target.checked }))} />
@@ -524,17 +480,11 @@ function App() {
               submitting={submitting} conflicts={conflicts} warnings={warnings} sourceNetworkOptions={sourceNetworkOptions}
               onSubmit={submitDeployment} onForceSubmit={forceSubmit} onResetConnection={resetConnection}
             />
-          ) : activeTab === "overview" ? (
+          ) : (
             <OverviewTab
               inventory={inventory} form={form} error={error} setError={setError}
               setAuthed={setAuthed} activeJobId={activeJobId} setActiveJobId={setActiveJobId}
               onRefresh={probeTarget} onRefreshJobs={refreshJobs}
-            />
-          ) : (
-            <CleanupTab
-              inventory={inventory} error={error} destroying={destroying}
-              selectedVmIds={selectedVmIds} onToggleVm={toggleVmSelect} onToggleAll={toggleSelectAllVms}
-              onDestroy={destroySelectedVms}
             />
           )}
 
@@ -651,67 +601,6 @@ function DeployTab({ form, setForm, inventory, error, submitting, conflicts, war
         {form.dryRun ? "生成部署预览" : "开始批量部署"}
       </button>
     </form>
-  );
-}
-
-function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, onToggleAll, onDestroy }) {
-  const [sortKey, setSortKey] = useState("name");
-  const [sortAsc, setSortAsc] = useState(true);
-
-  if (!inventory) {
-    return (
-      <div className="panel emptyPanel">
-        <div className="emptyState"><Server size={32} /><span>请先连接 vSphere 后查看虚拟机列表。</span></div>
-      </div>
-    );
-  }
-  const rawVms = inventory.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
-  const vms = [...rawVms].sort((a, b) => {
-    let cmp = 0;
-    if (sortKey === "name") cmp = a.name.localeCompare(b.name);
-    else if (sortKey === "createdAt") cmp = (a.createdAt || "").localeCompare(b.createdAt || "");
-    return sortAsc ? cmp : -cmp;
-  });
-
-  function toggleSort(key) {
-    if (sortKey === key) setSortAsc((a) => !a);
-    else { setSortKey(key); setSortAsc(true); }
-  }
-
-  function formatCreatedAt(iso) {
-    if (!iso) return "-";
-    try { return new Date(iso).toLocaleString(); } catch { return iso; }
-  }
-
-  return (
-    <div className="panel formPanel">
-      <div className="sectionHeader span2">
-        <SectionTitle icon={<Trash2 />} title={`虚拟机列表 (${vms.length} 台)`} />
-        <button type="button" className="dangerAction" disabled={!selectedVmIds.size || destroying} onClick={onDestroy}>
-          <PowerOff size={16} />
-          {destroying ? "执行中..." : `关机并删除 (${selectedVmIds.size})`}
-        </button>
-      </div>
-      <div className="hintBox span2">勾选要清理的虚拟机，点击"关机并删除"将强制关机后删除。此操作不可撤销。点击列标题排序。</div>
-      {error && <div className="alert span2"><ShieldAlert size={16} />{error}</div>}
-      <div className="vmCleanupList span2">
-        <div className="vmCleanupRow vmCleanupHeader">
-          <input type="checkbox" checked={rawVms.length > 0 && rawVms.every((v) => selectedVmIds.has(v.id))} onChange={onToggleAll} />
-          <span className="sortableHeader" onClick={() => toggleSort("name")}>名称 {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span>数据中心</span>
-          <span className="sortableHeader" onClick={() => toggleSort("createdAt")}>创建时间 {sortKey === "createdAt" ? (sortAsc ? "▲" : "▼") : ""}</span>
-        </div>
-        {vms.map((item) => (
-          <label key={item.id} className="vmCleanupRow">
-            <input type="checkbox" checked={selectedVmIds.has(item.id)} onChange={() => onToggleVm(item.id)} />
-            <span>{item.name}</span>
-            <span className="muted">{item.datacenter}</span>
-            <span className="muted">{formatCreatedAt(item.createdAt)}</span>
-          </label>
-        ))}
-        {vms.length === 0 && <div className="emptyState small"><span>当前环境没有普通虚拟机。</span></div>}
-      </div>
-    </div>
   );
 }
 
@@ -853,6 +742,32 @@ function OverviewTab({ inventory, form, error, setError, setAuthed, activeJobId,
     return state || "未知";
   }
 
+  async function handleDestroy() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    const names = (inventory?.inventoryItems ?? []).filter((item) => ids.includes(item.id)).map((item) => item.name);
+    if (!confirm(`确认关机并删除以下 ${names.length} 台虚拟机？\n\n${names.slice(0, 10).join("\n")}${names.length > 10 ? `\n...还有 ${names.length - 10} 台` : ""}`)) return;
+    setPowering(true);
+    setError("");
+    try {
+      const response = await fetch("/api/vms/destroy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ target: form.target, vmIds: ids })
+      });
+      if (response.status === 401) { setAuthed(false); return; }
+      const data = await response.json();
+      if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
+      if (data.job?.id) setActiveJobId(data.job.id);
+      setSelectedIds(new Set());
+      await onRefreshJobs();
+    } catch (err) {
+      setError(err.message || "销毁失败");
+    } finally {
+      setPowering(false);
+    }
+  }
+
   return (
     <div className="panel formPanel">
       <div className="sectionHeader span2">
@@ -917,6 +832,9 @@ function OverviewTab({ inventory, form, error, setError, setAuthed, activeJobId,
           </button>
           <button type="button" className="secondaryAction powerButton" onClick={() => handlePower("reset")} disabled={powering}>
             <RotateCcw size={14} /> 重启
+          </button>
+          <button type="button" className="dangerAction powerButton" onClick={handleDestroy} disabled={powering}>
+            <Trash2 size={14} /> 关机并删除
           </button>
         </div>
       )}
