@@ -193,6 +193,7 @@ export const useAppStore = create((set, get) => ({
   },
 
   resetStore: () => {
+    localStorage.removeItem(STORAGE_KEY);
     set({ 
       inventory: null, 
       jobs: [], 
