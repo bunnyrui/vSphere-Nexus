@@ -529,6 +529,34 @@ function OverviewTab({ inventory, form, error, setError, setAuthed, setActiveJob
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [powering, setPowering] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [colWidths, setColWidths] = useState([160, 72, 110, 52, 72, 72, null, 130]);
+  const resizingRef = useRef(null);
+
+  function startResize(e, colIndex) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const cols = document.querySelectorAll(`.vmOverviewTable colgroup col`);
+    const startWidth = cols[colIndex + 1].offsetWidth || 100;
+    resizingRef.current = { colIndex, startX, startWidth };
+    const onMove = (ev) => {
+      const diff = ev.clientX - startX;
+      setColWidths((prev) => {
+        const next = [...prev];
+        next[colIndex] = Math.max(40, startWidth + diff);
+        return next;
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("isResizing");
+      resizingRef.current = null;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.classList.add("isResizing");
+  }
 
   useEffect(() => { setSelectedIds(new Set()); }, [inventory]);
 
@@ -758,36 +786,55 @@ function OverviewTab({ inventory, form, error, setError, setAuthed, setActiveJob
 
       {error && <div className="alert span2"><ShieldAlert size={16} />{error}</div>}
 
-      <div className="vmOverviewList span2">
-        <div className="vmOverviewRow vmOverviewHeader">
-          <input type="checkbox" checked={filtered.length > 0 && selectedIds.size === filtered.length} onChange={toggleSelectAll} />
-          <span className="sortableHeader" onClick={() => toggleSort("name")}>名称 {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span className="sortableHeader" onClick={() => toggleSort("powerState")}>状态 {sortKey === "powerState" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span className="sortableHeader" onClick={() => toggleSort("ipAddress")}>IP 地址 {sortKey === "ipAddress" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span className="sortableHeader" onClick={() => toggleSort("numCPU")}>CPU {sortKey === "numCPU" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span className="sortableHeader" onClick={() => toggleSort("memoryMB")}>内存 {sortKey === "memoryMB" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span className="sortableHeader" onClick={() => toggleSort("storageCommitted")}>存储 {sortKey === "storageCommitted" ? (sortAsc ? "▲" : "▼") : ""}</span>
-          <span>操作系统</span>
-          <span className="sortableHeader" onClick={() => toggleSort("createdAt")}>创建时间 {sortKey === "createdAt" ? (sortAsc ? "▲" : "▼") : ""}</span>
-        </div>
-        {vms.map((item) => (
-          <label key={item.id} className="vmOverviewRow">
-            <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} />
-            <span className="vmName">{item.name}</span>
-            <span>
-              <span className={`powerBadge ${item.powerState === "poweredOn" ? "on" : item.powerState === "poweredOff" ? "off" : ""}`}>
-                {powerLabel(item.powerState)}
-              </span>
-            </span>
-            <span className={item.ipAddress ? "" : "muted"}>{item.ipAddress || "-"}</span>
-            <span>{item.numCPU || "-"} 核</span>
-            <span>{item.memoryMB ? (item.memoryMB >= 1024 ? `${(item.memoryMB / 1024).toFixed(1)} GB` : `${item.memoryMB} MB`) : "-"}</span>
-            <span>{formatBytes(item.storageCommitted)}</span>
-            <span className="muted osCell" title={item.guestOS}>{item.guestOS || "-"}</span>
-            <span className="muted">{formatCreatedAt(item.createdAt)}</span>
-          </label>
-        ))}
-        {vms.length === 0 && <div className="emptyState small"><span>没有匹配的虚拟机。</span></div>}
+      <div className="vmOverviewWrap span2">
+        <table className="vmOverviewTable">
+          <colgroup>
+            <col style={{ width: 32 }} />
+            <col style={{ width: colWidths[0] }} />
+            <col style={{ width: colWidths[1] }} />
+            <col style={{ width: colWidths[2] }} />
+            <col style={{ width: colWidths[3] }} />
+            <col style={{ width: colWidths[4] }} />
+            <col style={{ width: colWidths[5] }} />
+            <col style={{ width: colWidths[6] }} />
+            <col style={{ width: colWidths[7] }} />
+          </colgroup>
+          <thead>
+            <tr className="vmOverviewHeader">
+              <th><input type="checkbox" checked={filtered.length > 0 && selectedIds.size === filtered.length} onChange={toggleSelectAll} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("name")}>名称 {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 0)} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("powerState")}>状态 {sortKey === "powerState" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 1)} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("ipAddress")}>IP 地址 {sortKey === "ipAddress" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 2)} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("numCPU")}>CPU {sortKey === "numCPU" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 3)} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("memoryMB")}>内存 {sortKey === "memoryMB" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 4)} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("storageCommitted")}>存储 {sortKey === "storageCommitted" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 5)} /></th>
+              <th>操作系统<span className="colResize" onMouseDown={(e) => startResize(e, 6)} /></th>
+              <th className="sortableHeader" onClick={() => toggleSort("createdAt")}>创建时间 {sortKey === "createdAt" ? (sortAsc ? "▲" : "▼") : ""}<span className="colResize" onMouseDown={(e) => startResize(e, 7)} /></th>
+            </tr>
+          </thead>
+          <tbody>
+            {vms.map((item) => (
+              <tr key={item.id} className={selectedIds.has(item.id) ? "selected" : ""}>
+                <td><input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} /></td>
+                <td className="vmName">{item.name}</td>
+                <td>
+                  <span className={`powerBadge ${item.powerState === "poweredOn" ? "on" : item.powerState === "poweredOff" ? "off" : ""}`}>
+                    {powerLabel(item.powerState)}
+                  </span>
+                </td>
+                <td className={item.ipAddress ? "" : "muted"}>{item.ipAddress || "-"}</td>
+                <td>{item.numCPU || "-"} 核</td>
+                <td>{item.memoryMB ? (item.memoryMB >= 1024 ? `${(item.memoryMB / 1024).toFixed(1)} GB` : `${item.memoryMB} MB`) : "-"}</td>
+                <td>{formatBytes(item.storageCommitted)}</td>
+                <td className="muted osCell" title={item.guestOS}>{item.guestOS || "-"}</td>
+                <td className="muted">{formatCreatedAt(item.createdAt)}</td>
+              </tr>
+            ))}
+            {vms.length === 0 && (
+              <tr><td colSpan={9} className="emptyState small"><span>没有匹配的虚拟机。</span></td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

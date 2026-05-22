@@ -351,45 +351,78 @@ textarea {
   background: #fff;
 }
 
-.vmOverviewList {
+.vmOverviewWrap {
   border: 1px solid #e0e8ef;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: auto;
   max-height: 520px;
-  overflow-y: auto;
 }
 
-.vmOverviewRow {
-  display: grid;
-  grid-template-columns: 32px 1.4fr 70px 110px 50px 70px 70px 1fr 130px;
-  gap: 6px;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid #edf2f6;
+.vmOverviewTable {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
 }
 
-.vmOverviewRow:last-child {
+.vmOverviewTable th,
+.vmOverviewTable td {
+  padding: 8px 12px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid #edf2f6;
+}
+
+.vmOverviewTable thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.vmOverviewTable tr:last-child td {
   border-bottom: none;
+}
+
+.vmOverviewTable tr.selected td {
+  background: #edf5ff;
 }
 
 .vmOverviewHeader {
   background: #f7fafc;
   font-weight: 600;
   color: #52616f;
+  user-select: none;
 }
 
-.vmOverviewRow .vmName {
+.vmOverviewTable .vmName {
   font-weight: 500;
+}
+
+.vmOverviewTable .osCell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.vmOverviewRow .osCell {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.colResize {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.vmOverviewTable th {
+  position: relative;
+}
+
+.isResizing,
+.isResizing * {
+  cursor: col-resize !important;
 }
 
 .powerBadge {
@@ -517,12 +550,11 @@ textarea {
     position: static;
   }
 
-  .vmOverviewList {
+  .vmOverviewWrap {
     max-height: none;
-    overflow-x: auto;
   }
 
-  .vmOverviewRow {
+  .vmOverviewTable {
     min-width: 840px;
   }
 }
