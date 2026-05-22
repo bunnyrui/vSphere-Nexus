@@ -50,6 +50,15 @@ const loadInitialState = () => {
 
 const initialState = loadInitialState();
 
+function persistToStorage(state) {
+  const { password, ...safeTarget } = state.target;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    target: safeTarget,
+    deploymentConfig: state.deploymentConfig,
+    systemSettings: state.systemSettings
+  }));
+}
+
 export const useAppStore = create((set, get) => ({
   target: initialState.target,
   deploymentConfig: initialState.deploymentConfig,
@@ -62,14 +71,7 @@ export const useAppStore = create((set, get) => ({
   setTarget: (updates) => {
     const newTarget = { ...get().target, ...updates };
     set({ target: newTarget });
-    
-    // Save to localStorage (omitting password)
-    const { password, ...safeTarget } = newTarget;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ 
-      target: safeTarget,
-      deploymentConfig: get().deploymentConfig,
-      systemSettings: get().systemSettings
-    }));
+    persistToStorage(get());
   },
 
   setDeploymentConfig: (updates) => {
@@ -80,25 +82,13 @@ export const useAppStore = create((set, get) => ({
       naming: updates.naming ? { ...currentConfig.naming, ...updates.naming } : currentConfig.naming
     };
     set({ deploymentConfig: newConfig });
-    
-    const { password, ...safeTarget } = get().target;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ 
-      target: safeTarget,
-      deploymentConfig: newConfig,
-      systemSettings: get().systemSettings
-    }));
+    persistToStorage(get());
   },
 
   setSystemSettings: (updates) => {
     const newSettings = { ...get().systemSettings, ...updates };
     set({ systemSettings: newSettings });
-    
-    const { password, ...safeTarget } = get().target;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ 
-      target: safeTarget,
-      deploymentConfig: get().deploymentConfig,
-      systemSettings: newSettings
-    }));
+    persistToStorage(get());
   },
   
   setInventory: (inventory) => set({ inventory }),
