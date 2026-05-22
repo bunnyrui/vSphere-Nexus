@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { access, constants as fsConstants } from "node:fs/promises";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob } from "./jobs.js";
 import { makeViUrl, runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
 import { discoverVsphere, checkVmNameConflicts, powerOffAndDestroy } from "./vsphere.js";
@@ -16,13 +17,22 @@ const authPass = process.env.MASSOVA_PASS || "";
 const authEnabled = Boolean(authUser && authPass);
 const sessions = new Map();
 const SESSION_MAX_AGE = 24 * 60 * 60 * 1000;
+const loginAttempts = new Map();
+const LOGIN_RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxAttempts: 10 };
+const sseTickets = new Map();
 
 setInterval(() => {
   const now = Date.now();
   for (const [token, session] of sessions) {
     if (now - session.createdAt > SESSION_MAX_AGE) sessions.delete(token);
   }
-}, 60 * 60 * 1000);
+  for (const [key, record] of loginAttempts) {
+    if (now - record.windowStart > LOGIN_RATE_LIMIT.windowMs) loginAttempts.delete(key);
+  }
+  for (const [ticket, entry] of sseTickets) {
+    if (now - entry.createdAt > 30000) sseTickets.delete(ticket);
+  }
+}, 60 * 60 * 1000).unref();
 
 app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
 app.use(express.json({ limit: "1mb" }));
@@ -63,8 +73,22 @@ app.get("/api/auth/status", (_req, res) => {
 
 app.post("/api/auth/login", (req, res) => {
   if (!authEnabled) return res.json({ ok: true, token: "" });
+
+  const clientKey = req.ip || "unknown";
+  const now = Date.now();
+  let record = loginAttempts.get(clientKey);
+  if (!record || now - record.windowStart > LOGIN_RATE_LIMIT.windowMs) {
+    record = { windowStart: now, count: 0 };
+    loginAttempts.set(clientKey, record);
+  }
+  record.count++;
+  if (record.count > LOGIN_RATE_LIMIT.maxAttempts) {
+    return res.status(429).json({ ok: false, error: "登录尝试过于频繁，请稍后再试" });
+  }
+
   const { username, password } = req.body ?? {};
   if (username === authUser && password === authPass) {
+    loginAttempts.delete(clientKey);
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, { createdAt: Date.now() });
     return res.json({ ok: true, token });
@@ -72,13 +96,19 @@ app.post("/api/auth/login", (req, res) => {
   res.status(401).json({ ok: false, error: "用户名或密码错误" });
 });
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", async (_req, res) => {
   const resolvedPath = getOvfToolPath();
+  let ovftoolAvailable = false;
+  try {
+    await access(resolvedPath, fsConstants.X_OK);
+    ovftoolAvailable = true;
+  } catch {
+  }
   res.json({
     ok: true,
     authEnabled,
     ovftoolPath: resolvedPath,
-    ovftoolAvailable: true
+    ovftoolAvailable
   });
 });
 
@@ -92,7 +122,25 @@ app.get("/api/jobs/:id", (req, res) => {
   res.json({ job });
 });
 
+app.post("/api/jobs/:id/events-ticket", (req, res) => {
+  const ticket = crypto.randomBytes(16).toString("hex");
+  sseTickets.set(ticket, { jobId: req.params.id, createdAt: Date.now() });
+  res.json({ ticket });
+});
+
 app.get("/api/jobs/:id/events", (req, res) => {
+  const ticketParam = req.query?.ticket;
+  if (ticketParam) {
+    const ticketEntry = sseTickets.get(ticketParam);
+    if (!ticketEntry || ticketEntry.jobId !== req.params.id || Date.now() - ticketEntry.createdAt > 30000) {
+      return res.status(401).json({ error: "无效或已过期的 SSE ticket" });
+    }
+    sseTickets.delete(ticketParam);
+  } else if (authEnabled) {
+    const token = extractToken(req);
+    if (!isValidToken(token)) return res.status(401).json({ error: "未认证" });
+  }
+
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
 
@@ -103,13 +151,25 @@ app.get("/api/jobs/:id/events", (req, res) => {
   res.flushHeaders();
 
   let lastLogIndex = job.logs.length;
+  let closed = false;
+
+  function safeWrite(data) {
+    if (closed) return false;
+    try {
+      res.write(data);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   const interval = setInterval(() => {
     const current = getJob(req.params.id);
     if (!current) {
       clearInterval(interval);
-      res.write(`event: close\ndata: {}\n\n`);
+      safeWrite(`event: close\ndata: {}\n\n`);
       res.end();
+      closed = true;
       return;
     }
 
@@ -117,35 +177,47 @@ app.get("/api/jobs/:id/events", (req, res) => {
       const newLogs = current.logs.slice(lastLogIndex);
       lastLogIndex = current.logs.length;
       for (const log of newLogs) {
-        res.write(`event: log\ndata: ${JSON.stringify(log)}\n\n`);
+        if (!safeWrite(`event: log\ndata: ${JSON.stringify(log)}\n\n`)) {
+          clearInterval(interval);
+          closed = true;
+          return;
+        }
       }
     }
 
-    res.write(`event: status\ndata: ${JSON.stringify({
+    if (!safeWrite(`event: status\ndata: ${JSON.stringify({
       status: current.status,
       progress: current.progress,
       vmResults: current.vmResults
-    })}\n\n`);
+    })}\n\n`)) {
+      clearInterval(interval);
+      closed = true;
+      return;
+    }
 
     if (current.status !== "running" && current.status !== "queued") {
       clearInterval(interval);
-      res.write(`event: close\ndata: {}\n\n`);
+      safeWrite(`event: close\ndata: {}\n\n`);
       res.end();
+      closed = true;
     }
   }, 500);
 
-  req.on("close", () => clearInterval(interval));
+  req.on("close", () => {
+    closed = true;
+    clearInterval(interval);
+  });
 });
 
 app.post("/api/jobs/:id/cancel", (req, res) => {
   const cancelled = cancelJob(req.params.id);
-  if (!cancelled) return res.status(404).json({ error: "Job not found or already finished" });
+  if (!cancelled) return res.status(404).json({ errors: ["Job not found or already finished"] });
   res.json({ ok: true });
 });
 
 app.post("/api/jobs/:id/retry", (req, res) => {
   const job = retryFailed(req.params.id);
-  if (!job) return res.status(400).json({ error: "Job not found or not in failed state" });
+  if (!job) return res.status(400).json({ errors: ["Job not found or not in failed state"] });
   res.json({ job });
 });
 
@@ -264,7 +336,7 @@ app.post("/api/targets/discover", async (req, res) => {
   } catch (error) {
     res.status(502).json({
       ok: false,
-      error: error.message || "读取 vSphere 资源失败"
+      errors: [error.message || "读取 vSphere 资源失败"]
     });
   }
 });
@@ -282,7 +354,7 @@ app.get("/api/templates", async (_req, res) => {
 
 app.post("/api/templates", async (req, res) => {
   const { name, config } = req.body;
-  if (!name || !config) return res.status(400).json({ error: "需要模板名称和配置" });
+  if (!name || !config) return res.status(400).json({ errors: ["需要模板名称和配置"] });
 
   const { readFile: rf, writeFile: wf, mkdir } = await import("node:fs/promises");
   const templatesFile = join(__dirname, "..", "data", "templates.json");
@@ -327,15 +399,48 @@ if (process.env.NODE_ENV === "production") {
 }
 
 async function start() {
-  await initStore();
-  const ovftoolPath = await resolveOvfToolPath();
-  app.listen(port, () => {
+  try {
+    await initStore();
+  } catch (err) {
+    console.error("初始化存储失败:", err.message);
+    process.exit(1);
+  }
+
+  const server = app.listen(port, () => {
     console.log(`MassOVA server listening on http://localhost:${port}${authEnabled ? " (auth enabled)" : ""}`);
-    console.log(`ovftool: ${ovftoolPath}`);
   });
+
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`端口 ${port} 已被占用，请修改 PORT 环境变量`);
+      process.exit(1);
+    }
+    console.error("服务器错误:", err.message);
+  });
+
+  const ovftoolPath = await resolveOvfToolPath();
+  console.log(`ovftool: ${ovftoolPath}`);
+
+  function gracefulShutdown(signal) {
+    console.log(`\n收到 ${signal}，正在关闭...`);
+    server.close(() => {
+      console.log("HTTP 服务器已关闭");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error("强制关闭（等待超时）");
+      process.exit(1);
+    }, 5000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
-start();
+start().catch((err) => {
+  console.error("启动失败:", err.message);
+  process.exit(1);
+});
 
 function normalizeDeployment(body) {
   return {

@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { buildOvfToolArgs, renderTemplate, runOvfTool, stringifyCommand } from "./ovftool.js";
 import { powerOffAndDestroy } from "./vsphere.js";
 
@@ -9,13 +10,68 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(__dirname, "..", "data");
 const jobsFile = join(dataDir, "jobs.json");
 const payloadsFile = join(dataDir, "payloads.json");
+const ENCRYPTION_KEY_FILE = join(dataDir, ".payload-key");
+
+const ALGO = "aes-256-gcm";
+let encryptionKey = null;
+
+async function getEncryptionKey() {
+  if (encryptionKey) return encryptionKey;
+  try {
+    encryptionKey = await readFile(ENCRYPTION_KEY_FILE);
+  } catch {
+    encryptionKey = randomBytes(32);
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(ENCRYPTION_KEY_FILE, encryptionKey);
+  }
+  return encryptionKey;
+}
+
+function encryptField(plaintext) {
+  const iv = randomBytes(12);
+  const key = encryptionKey;
+  const cipher = createCipheriv(ALGO, key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function decryptField(ciphertext) {
+  if (!ciphertext.startsWith("enc:v1:")) return ciphertext;
+  const parts = ciphertext.split(":");
+  const iv = Buffer.from(parts[2], "base64");
+  const tag = Buffer.from(parts[3], "base64");
+  const data = Buffer.from(parts[4], "base64");
+  const key = encryptionKey;
+  const decipher = createDecipheriv(ALGO, key, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(data, undefined, "utf8") + decipher.final("utf8");
+}
+
+function encryptPayload(payload) {
+  if (!encryptionKey || !payload?.target?.password) return payload;
+  const copy = JSON.parse(JSON.stringify(payload));
+  copy.target.password = encryptField(copy.target.password);
+  return copy;
+}
+
+function decryptPayload(payload) {
+  if (!payload?.target?.password) return payload;
+  const copy = JSON.parse(JSON.stringify(payload));
+  if (copy.target.password.startsWith("enc:v1:")) {
+    copy.target.password = decryptField(copy.target.password);
+  }
+  return copy;
+}
 
 const jobs = new Map();
 const controllers = new Map();
 const payloads = new Map();
 let saveTimer = null;
+let savePending = false;
 
 export async function initStore() {
+  await getEncryptionKey();
   try {
     const raw = await readFile(jobsFile, "utf-8");
     const entries = JSON.parse(raw);
@@ -35,7 +91,7 @@ export async function initStore() {
     const entries = JSON.parse(raw);
     if (Array.isArray(entries)) {
       for (const { id, payload } of entries) {
-        payloads.set(id, payload);
+        payloads.set(id, decryptPayload(payload));
       }
     }
   } catch {
@@ -45,7 +101,16 @@ export async function initStore() {
 
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveToDisk, 500);
+  savePending = true;
+  saveTimer = setTimeout(() => {
+    savePending = false;
+    saveToDisk();
+  }, 500);
+}
+
+function scheduleSaveImmediate() {
+  savePending = true;
+  saveToDisk();
 }
 
 async function saveToDisk() {
@@ -58,7 +123,7 @@ async function saveToDisk() {
 
     const payloadEntries = [...payloads.entries()]
       .filter(([id]) => jobs.has(id))
-      .map(([id, payload]) => ({ id, payload }));
+      .map(([id, payload]) => ({ id, payload: encryptPayload(payload) }));
     await writeFile(payloadsFile, JSON.stringify(payloadEntries, null, 2), "utf-8");
   } catch (err) {
     console.error("保存任务数据失败:", err.message);
@@ -111,7 +176,7 @@ export async function createJob(payload) {
   const safePayload = JSON.parse(JSON.stringify(payload));
   payloads.set(id, safePayload);
   scheduleSave();
-  runJob(job, safePayload);
+  runJob(job, safePayload).catch((err) => console.error(`runJob ${job.id} unhandled:`, err));
   return job;
 }
 
@@ -133,15 +198,17 @@ export function retryFailed(id) {
   }
   job.progress.failed -= failedIndices.length;
   job.status = "queued";
+  job.startedAt = new Date().toISOString();
   job.finishedAt = null;
   appendLog(job, "system", `重试 ${failedIndices.length} 台失败的虚拟机`);
   scheduleSave();
 
-  runRetryJob(job, payload, failedIndices);
+  runRetryJob(job, payload, failedIndices).catch((err) => console.error(`runRetryJob ${job.id} unhandled:`, err));
   return job;
 }
 
 export async function createDestroyJob(target, vmIds) {
+  const uniqueVmIds = [...new Set(vmIds)];
   const id = nanoid(10);
   const job = {
     id,
@@ -152,10 +219,10 @@ export async function createDestroyJob(target, vmIds) {
     finishedAt: null,
     dryRun: false,
     concurrency: 1,
-    progress: { total: vmIds.length, completed: 0, failed: 0 },
+    progress: { total: uniqueVmIds.length, completed: 0, failed: 0 },
     commands: [],
     logs: [],
-    vmResults: vmIds.map((vmId, index) => ({
+    vmResults: uniqueVmIds.map((vmId, index) => ({
       index,
       name: vmId,
       status: "pending"
@@ -163,8 +230,9 @@ export async function createDestroyJob(target, vmIds) {
   };
 
   jobs.set(id, job);
+  payloads.set(id, { type: "destroy", target, vmIds: uniqueVmIds });
   scheduleSave();
-  runDestroyJob(job, target, vmIds);
+  runDestroyJob(job, target, uniqueVmIds).catch((err) => console.error(`runDestroyJob ${job.id} unhandled:`, err));
   return job;
 }
 
@@ -178,7 +246,9 @@ function appendLog(job, stream, message) {
   if (job.logs.length > 1000) {
     job.logs.splice(0, job.logs.length - 1000);
   }
-  scheduleSave();
+  if (job.logs.length % 10 === 0 || stream === "system" || !savePending) {
+    scheduleSave();
+  }
 }
 
 async function runJob(job, payload) {

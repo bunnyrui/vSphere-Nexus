@@ -367,7 +367,7 @@ textarea {
 
 .vmCleanupRow {
   display: grid;
-  grid-template-columns: 32px 1fr 120px 60px;
+  grid-template-columns: 32px 1fr 120px;
   gap: 8px;
   align-items: center;
   padding: 8px 12px;
@@ -409,11 +409,12 @@ textarea {
   opacity: 0.65;
 }
 
-.probeRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+.hintBox {
+  border-radius: 8px;
+  background: #f5f8fb;
+  border: 1px solid #e0e8ef;
+  color: #52616f;
+  padding: 12px;
 }
 
 .vmGenerator {
@@ -436,10 +437,6 @@ textarea {
   padding: 6px 8px;
 }
 
-.inlineAction {
-  margin-bottom: 10px;
-}
-
 .resourceGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -448,52 +445,6 @@ textarea {
   background: #f7fafc;
   border: 1px solid #e0e8ef;
   padding: 14px;
-}
-
-.hintBox {
-  border-radius: 8px;
-  background: #f5f8fb;
-  border: 1px solid #e0e8ef;
-  color: #52616f;
-  padding: 12px;
-}
-
-.probeResult {
-  min-height: 42px;
-  border-radius: 8px;
-  padding: 9px 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.okResult {
-  background: #edf8f3;
-  border: 1px solid #c7eadb;
-  color: #176b4d;
-}
-
-.badResult {
-  background: #fff4f1;
-  border: 1px solid #f3c8c1;
-  color: #9a3412;
-}
-
-.completionBox {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  border-radius: 8px;
-  background: #f5f8fb;
-  border: 1px solid #e0e8ef;
-  padding: 10px;
-}
-
-.completionBox code {
-  border-radius: 6px;
-  background: #fff;
-  border: 1px solid #d8e0e8;
-  padding: 5px 8px;
 }
 
 .jobPanel {

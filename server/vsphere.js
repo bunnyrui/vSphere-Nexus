@@ -2,6 +2,9 @@ const VIM_NS = "urn:vim25";
 
 const sessionCache = new Map();
 
+let tlsBypassCount = 0;
+let tlsOriginalValue = undefined;
+
 function sessionKey(target) {
   return `${target.host}|${target.username}`;
 }
@@ -46,10 +49,11 @@ export async function discoverVsphere(target) {
 export async function checkVmNameConflicts(target, vmNames, folder) {
   try {
     const inventory = await discoverVsphere(target);
+    const vms = (inventory.inventoryItems ?? []).filter((item) => item.kind === "VM");
     const existingNames = new Set(
-      (inventory.inventoryItems ?? [])
-        .filter((item) => item.kind === "VM")
-        .map((item) => item.name)
+      folder
+        ? vms.filter((item) => item.inventoryPath.includes(`/${folder}/`)).map((item) => item.name)
+        : vms.map((item) => item.name)
     );
     return vmNames.filter((name) => existingNames.has(name));
   } catch {
@@ -179,12 +183,15 @@ export async function powerOffAndDestroy(target, vmIds, { onProgress } = {}) {
     try {
       const powerState = await getVmPowerState(target.host, cookie, vmId);
       if (powerState === "poweredOn") {
-        await soap(target.host, envelope(`
+        const powerOffResult = await soap(target.host, envelope(`
           <PowerOffVM_Task xmlns="${VIM_NS}">
             ${ref("_this", { type: "VirtualMachine", id: vmId })}
           </PowerOffVM_Task>
         `), cookie);
-        await waitForTask(target.host, cookie, serviceContent.propertyCollector);
+        const taskMor = parseTaskReturn(powerOffResult.text);
+        if (taskMor) {
+          await waitForTask(target.host, cookie, taskMor);
+        }
       }
 
       await soap(target.host, envelope(`
@@ -222,14 +229,44 @@ async function getVmPowerState(host, cookie, vmId) {
   return match?.[1] ?? "unknown";
 }
 
-async function waitForTask(host, cookie, propertyCollector) {
-  for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 1000));
+function parseTaskReturn(xml) {
+  const match = xml.match(/<returnval[^>]*type="Task"[^>]*>([^<]+)<\/returnval>/);
+  if (!match) return null;
+  return { type: "Task", id: match[1] };
+}
+
+async function waitForTask(host, cookie, taskMor) {
+  for (let i = 0; i < 120; i++) {
+    const body = envelope(`
+      <RetrievePropertiesEx xmlns="${VIM_NS}">
+        ${ref("_this", { type: "PropertyCollector", id: "ha-property-collector" })}
+        <specSet>
+          <propSet><type>Task</type><all>false</all><pathSet>info.state</pathSet></propSet>
+          <objectSet>
+            ${ref("obj", taskMor)}
+            <skip>false</skip>
+          </objectSet>
+        </specSet>
+        <options/>
+      </RetrievePropertiesEx>
+    `);
+    const { text } = await soap(host, body, cookie);
+    const stateMatch = text.match(/<pathSet>info\.state<\/pathSet>[\s\S]*?<val[^>]*>([^<]+)<\/val>/);
+    const state = stateMatch?.[1];
+    if (state === "success") return;
+    if (state === "error") {
+      const fault = textTag(text, "faultstring");
+      const localized = textTag(text, "localizedMessage");
+      throw new Error(localized || fault || "任务执行失败");
+    }
+    await new Promise((r) => setTimeout(r, 2000));
   }
+  throw new Error("等待 vSphere 任务超时 (240秒)");
 }
 
 async function soap(host, body, cookie = "") {
-  const savedTls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  if (tlsBypassCount === 0) tlsOriginalValue = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  tlsBypassCount++;
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   try {
     const response = await fetch(`https://${host}/sdk`, {
@@ -248,10 +285,14 @@ async function soap(host, body, cookie = "") {
       cookie: setCookie.split(";")[0]
     };
   } finally {
-    if (savedTls === undefined) {
-      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    } else {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = savedTls;
+    tlsBypassCount--;
+    if (tlsBypassCount <= 0) {
+      tlsBypassCount = 0;
+      if (tlsOriginalValue === undefined) {
+        delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      } else {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = tlsOriginalValue;
+      }
     }
   }
 }
@@ -459,6 +500,8 @@ function escapeXml(value = "") {
 
 function decodeXml(value = "") {
   return String(value)
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')

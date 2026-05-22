@@ -108,10 +108,10 @@ function LoginPage({ onLogin }) {
             <label>用户名</label>
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
           </div>
-          <div className="field">
-            <label>密码</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </div>
+           <div className="field">
+             <label>密码</label>
+             <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+           </div>
           {error && <div className="alert"><ShieldAlert size={16} />{error}</div>}
           <button className="primaryAction" type="submit" disabled={loading}>
             <LogIn size={18} />
@@ -178,7 +178,14 @@ function App() {
     try {
       const response = await fetch("/api/auth/status");
       const data = await response.json();
-      if (data.enabled && !localStorage.getItem(tokenKey)) setAuthed(false);
+      if (!data.enabled) return;
+      const token = localStorage.getItem(tokenKey);
+      if (!token) { setAuthed(false); return; }
+      const testResponse = await fetch("/api/jobs", { headers: authHeaders() });
+      if (testResponse.status === 401) {
+        localStorage.removeItem(tokenKey);
+        setAuthed(false);
+      }
     } catch {
       setAuthed(false);
     }
@@ -728,7 +735,12 @@ function formatBytes(bytes) {
 }
 
 function Repeater({ icon, title, rows, columns, selectOptions = {}, onChange, emptyRow, readOnly = false, emptyMessage = "" }) {
-  const safeRows = rows.length ? rows : [emptyRow];
+  const [rowIds] = useState(() => ({ counter: 0, map: new Map() }));
+  function getRowId(index) {
+    if (!rowIds.map.has(index)) rowIds.map.set(index, ++rowIds.counter);
+    return rowIds.map.get(index);
+  }
+  const safeRows = (readOnly && !rows.length) ? [] : (rows.length ? rows : [emptyRow]);
   return (
     <section className="nestedSection span2">
       <div className="sectionHeader">
@@ -737,7 +749,7 @@ function Repeater({ icon, title, rows, columns, selectOptions = {}, onChange, em
       </div>
       {readOnly && !rows.length && <div className="readonlyNotice">{emptyMessage}</div>}
       {safeRows.map((row, index) => (
-        <div className="rowEditor" key={index}>
+        <div className="rowEditor" key={getRowId(index)}>
           {columns.map(([key, label]) => (
             selectOptions[key]?.length ? (
               <select key={key} value={row[key] ?? ""} disabled={readOnly} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }}>
@@ -798,21 +810,48 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
   useEffect(() => {
     if (!job) return;
     if (job.status !== "running" && job.status !== "queued") { setSseLogs([]); setSseStatus(null); return; }
-    setSseLogs([]); setSseStatus(null);
-    const token = localStorage.getItem("massova.token");
-    const url = `/api/jobs/${job.id}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-    const es = new EventSource(url);
-    es.addEventListener("log", (e) => setSseLogs((p) => [...p, JSON.parse(e.data)]));
-    es.addEventListener("status", (e) => setSseStatus(JSON.parse(e.data)));
-    es.addEventListener("close", () => es.close());
-    es.onerror = () => es.close();
-    return () => es.close();
+
+    let es = null;
+    let closed = false;
+
+    async function connect() {
+      setSseLogs([]); setSseStatus(null);
+      const token = localStorage.getItem("massova.token");
+      let url = `/api/jobs/${job.id}/events`;
+      if (token) {
+        try {
+          const ticketRes = await fetch(`/api/jobs/${job.id}/events-ticket`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (ticketRes.ok && !closed) {
+            const { ticket } = await ticketRes.json();
+            url += `?ticket=${encodeURIComponent(ticket)}`;
+          }
+        } catch {
+        }
+      }
+      if (closed) return;
+      es = new EventSource(url);
+      es.addEventListener("log", (e) => setSseLogs((p) => [...p, JSON.parse(e.data)]));
+      es.addEventListener("status", (e) => setSseStatus(JSON.parse(e.data)));
+      es.addEventListener("close", () => es.close());
+      es.onerror = () => es.close();
+    }
+
+    connect();
+    return () => { closed = true; es?.close(); };
   }, [job?.id, job?.status]);
 
   const allLogs = useMemo(() => {
     const base = job?.logs ?? [];
     return sseLogs.length === 0 ? base : [...base, ...sseLogs];
   }, [job?.logs?.length, sseLogs]);
+
+  const logLineId = useMemo(() => {
+    let counter = 0;
+    return allLogs.map(() => ++counter);
+  }, [allLogs]);
 
   useEffect(() => { if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight; }, [allLogs]);
 
@@ -858,11 +897,11 @@ function JobPanel({ job, onCancel, onRetry, onRefresh }) {
             </div>
           )}
           <div className="commandList">
-            {(job.commands ?? []).slice(0, 3).map((cmd, i) => <code key={i}>{cmd}</code>)}
+            {(job.commands ?? []).slice(0, 5).map((cmd, i) => <code key={i}>{cmd}</code>)}
           </div>
           <div className="logBox" ref={logBoxRef}>
             {allLogs.map((line, i) => (
-              <div className={`logLine ${line.stream}`} key={`${line.at}-${i}`}>
+              <div className={`logLine ${line.stream}`} key={logLineId[i]}>
                 <time>{new Date(line.at).toLocaleTimeString()}</time>
                 <span>{line.message}</span>
               </div>

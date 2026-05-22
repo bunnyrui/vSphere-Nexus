@@ -147,6 +147,7 @@ export function stringifyCommand(args) {
 
 export function runOvfTool(args, { signal, onLine }) {
   return new Promise((resolve) => {
+    let settled = false;
     const child = spawn(getOvfToolPath(), args, { shell: false, signal });
     let stdout = "";
     let stderr = "";
@@ -165,11 +166,17 @@ export function runOvfTool(args, { signal, onLine }) {
 
     child.on("error", (error) => {
       onLine?.("stderr", error.message);
-      resolve({ code: 127, stdout, stderr: `${stderr}${error.message}` });
+      if (!settled) {
+        settled = true;
+        resolve({ code: 127, stdout, stderr: `${stderr}${error.message}` });
+      }
     });
 
     child.on("close", (code) => {
-      resolve({ code, stdout, stderr });
+      if (!settled) {
+        settled = true;
+        resolve({ code, stdout, stderr });
+      }
     });
   });
 }
