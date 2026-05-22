@@ -205,7 +205,7 @@ export function retryFailed(id) {
   for (const idx of failedIndices) {
     job.vmResults[idx].status = "pending";
   }
-  job.progress.failed -= failedIndices.length;
+  job.progress.failed = Math.max(0, job.progress.failed - failedIndices.length);
   job.status = "queued";
   job.startedAt = new Date().toISOString();
   job.finishedAt = null;
