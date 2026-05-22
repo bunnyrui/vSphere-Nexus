@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useAuthStore } from './useAuthStore';
 
 const STORAGE_KEY = 'nexus_config';
 
@@ -119,10 +120,9 @@ export const useAppStore = create((set, get) => ({
       });
       
       if (response.status === 401) {
-         // Auto logout on session expiry
-         window.location.reload(); 
-         return;
-      }
+          useAuthStore.getState().logout();
+          return;
+       }
 
       const data = await response.json();
       if (response.ok) {
@@ -139,9 +139,9 @@ export const useAppStore = create((set, get) => ({
       const response = await fetch('/api/jobs', { headers });
       
       if (response.status === 401) {
-         window.location.reload();
-         return;
-      }
+          useAuthStore.getState().logout();
+          return;
+       }
 
       if (response.ok) {
         const data = await response.json();
