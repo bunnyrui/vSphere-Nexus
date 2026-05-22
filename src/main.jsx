@@ -53,7 +53,6 @@ const defaultState = {
     powerOn: false
   },
   networkMappings: [{ source: "VM Network", target: "VM Network" }],
-  properties: [],
   vms: [{ ...emptyVm }]
 };
 
@@ -408,7 +407,7 @@ function App() {
           ) : (
             <OverviewTab
               inventory={inventory} form={form} error={error} setError={setError}
-              setAuthed={setAuthed} activeJobId={activeJobId} setActiveJobId={setActiveJobId}
+              setAuthed={setAuthed} setActiveJobId={setActiveJobId}
               onRefresh={probeTarget} onRefreshJobs={refreshJobs}
             />
           )}
@@ -522,7 +521,7 @@ function DeployTab({ form, setForm, inventory, error, submitting, conflicts, set
   );
 }
 
-function OverviewTab({ inventory, form, error, setError, setAuthed, activeJobId, setActiveJobId, onRefresh, onRefreshJobs }) {
+function OverviewTab({ inventory, form, error, setError, setAuthed, setActiveJobId, onRefresh, onRefreshJobs }) {
   const [sortKey, setSortKey] = useState("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [searchText, setSearchText] = useState("");
@@ -847,33 +846,32 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-function Repeater({ icon, title, rows, columns, selectOptions = {}, onChange, emptyRow, readOnly = false, emptyMessage = "" }) {
+function Repeater({ icon, title, rows, columns, selectOptions = {}, onChange, emptyRow }) {
   const [rowIds] = useState(() => ({ counter: 0, map: new Map() }));
   function getRowId(index) {
     if (!rowIds.map.has(index)) rowIds.map.set(index, ++rowIds.counter);
     return rowIds.map.get(index);
   }
-  const safeRows = (readOnly && !rows.length) ? [] : (rows.length ? rows : [emptyRow]);
+  const safeRows = rows.length ? rows : [emptyRow];
   return (
     <section className="nestedSection span2">
       <div className="sectionHeader">
         <SectionTitle icon={icon} title={title} />
-        <button type="button" className="iconButton" onClick={() => onChange([...rows, emptyRow])} aria-label={`新增${title}`} disabled={readOnly}><Plus size={17} /></button>
+        <button type="button" className="iconButton" onClick={() => onChange([...rows, emptyRow])} aria-label={`新增${title}`}><Plus size={17} /></button>
       </div>
-      {readOnly && !rows.length && <div className="readonlyNotice">{emptyMessage}</div>}
       {safeRows.map((row, index) => (
         <div className="rowEditor" key={getRowId(index)}>
           {columns.map(([key, label]) => (
             selectOptions[key]?.length ? (
-              <select key={key} value={row[key] ?? ""} disabled={readOnly} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }}>
+              <select key={key} value={row[key] ?? ""} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }}>
                 <option value="">选择{label}</option>
                 {selectOptions[key].map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             ) : (
-              <input key={key} value={row[key] ?? ""} placeholder={label} readOnly={readOnly} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }} />
+              <input key={key} value={row[key] ?? ""} placeholder={label} onChange={(e) => { const n = [...safeRows]; n[index] = { ...n[index], [key]: e.target.value }; onChange(n); }} />
             )
           ))}
-          <button type="button" className="iconButton danger" onClick={() => onChange(safeRows.filter((_, ri) => ri !== index))} aria-label={`删除${title}`} disabled={readOnly}><Trash2 size={17} /></button>
+          <button type="button" className="iconButton danger" onClick={() => onChange(safeRows.filter((_, ri) => ri !== index))} aria-label={`删除${title}`}><Trash2 size={17} /></button>
         </div>
       ))}
     </section>
@@ -1058,7 +1056,6 @@ function mergeState(base, saved, session) {
     target: { ...base.target, ...(saved.target ?? {}), ...(session.target ?? {}) },
     vmNaming: { ...base.vmNaming, ...(saved.vmNaming ?? {}) },
     networkMappings: Array.isArray(saved.networkMappings) ? saved.networkMappings : base.networkMappings,
-    properties: Array.isArray(saved.properties) ? saved.properties : base.properties,
     vms: Array.isArray(saved.vms) ? saved.vms : base.vms
   };
 }

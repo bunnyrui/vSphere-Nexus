@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob } from "./jobs.js";
-import { runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
+import { resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
 import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
 
 const app = express();
@@ -394,7 +394,6 @@ function normalizeDeployment(body) {
     sourceInventoryPath: String(body.sourceInventoryPath ?? "").trim(),
     target: normalizeTarget(body.target ?? {}),
     networkMappings: (body.networkMappings ?? []).filter((item) => item.source || item.target),
-    properties: (body.properties ?? []).filter((item) => item.key),
     vms: (body.vms ?? []).filter((item) => item.name)
   };
 }

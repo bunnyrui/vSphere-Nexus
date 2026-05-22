@@ -523,7 +523,6 @@ chmod 700 data/
 chmod 600 data/.payload-key
 chmod 600 data/payloads.json
 chmod 644 data/jobs.json
-chmod 644 data/templates.json
 ```
 
 ### 数据备份
@@ -672,7 +671,7 @@ sudo systemctl restart massova
 
 ### 数据兼容性
 
-- `data/jobs.json` 和 `data/templates.json` 向后兼容
+- `data/jobs.json` 向后兼容
 - `data/payloads.json` 中的密码加密格式为 `enc:v1:<iv>:<tag>:<data>`，未加密的旧数据仍可读取
 - 如果升级后首次启动报错，检查 Node.js 版本是否符合要求
 

@@ -95,11 +95,11 @@ function encodeInventoryPath(path = "") {
   return `${hasLeadingSlash ? "/" : ""}${encoded}`;
 }
 
-export function makeViUrl(target, includePassword = true) {
+function makeViUrl(target, includePassword = true) {
   return makeInventoryViUrl(target, target.platform === "vcenter" ? target.inventoryPath : "", includePassword);
 }
 
-export function makeInventoryViUrl(target, inventoryPath = "", includePassword = true) {
+function makeInventoryViUrl(target, inventoryPath = "", includePassword = true) {
   const host = target.host?.trim();
   const username = encodeURIComponent(target.username?.trim() ?? "");
   const password = includePassword ? encodeURIComponent(target.password ?? "") : maskSecret(target.password ?? "");
@@ -123,12 +123,6 @@ export function buildOvfToolArgs(payload, vm, index, { masked = false } = {}) {
   for (const mapping of payload.networkMappings ?? []) {
     if (mapping.source && mapping.target) {
       args.push(`--net:${mapping.source}=${mapping.target}`);
-    }
-  }
-
-  for (const property of payload.properties ?? []) {
-    if (property.key) {
-      args.push(`--prop:${property.key}=${renderTemplate(property.value, renderedVm, index)}`);
     }
   }
 

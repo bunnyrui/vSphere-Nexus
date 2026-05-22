@@ -46,15 +46,11 @@ export async function discoverVsphere(target) {
   return normalizeInventory(target, objects);
 }
 
-export async function checkVmNameConflicts(target, vmNames, folder) {
+export async function checkVmNameConflicts(target, vmNames) {
   try {
     const inventory = await discoverVsphere(target);
     const vms = (inventory.inventoryItems ?? []).filter((item) => item.kind === "VM");
-    const existingNames = new Set(
-      folder
-        ? vms.filter((item) => item.inventoryPath.includes(`/${folder}/`)).map((item) => item.name)
-        : vms.map((item) => item.name)
-    );
+    const existingNames = new Set(vms.map((item) => item.name));
     return vmNames.filter((name) => existingNames.has(name));
   } catch {
     return [];

@@ -26,9 +26,9 @@
 
 ---
 
-### 5. 部署配置模板 ✅ 已实现
+### 5. ~~部署配置模板~~ 已移除
 
-`POST/GET/DELETE /api/templates` CRUD 接口，模板存 `data/templates.json`。前端顶部栏可保存/加载/删除模板。
+经评估运维场景无实际需求，已删除前后端模板 CRUD 路由和 UI。
 
 ---
 
