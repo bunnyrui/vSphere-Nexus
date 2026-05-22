@@ -14,17 +14,20 @@ const ENCRYPTION_KEY_FILE = join(dataDir, ".payload-key");
 
 const ALGO = "aes-256-gcm";
 let encryptionKey = null;
+let keyPromise = null;
 
 async function getEncryptionKey() {
   if (encryptionKey) return encryptionKey;
-  try {
-    encryptionKey = await readFile(ENCRYPTION_KEY_FILE);
-  } catch {
-    encryptionKey = randomBytes(32);
-    await mkdir(dataDir, { recursive: true });
-    await writeFile(ENCRYPTION_KEY_FILE, encryptionKey, { mode: 0o600 });
-  }
-  return encryptionKey;
+  return keyPromise ??= (async () => {
+    try {
+      encryptionKey = await readFile(ENCRYPTION_KEY_FILE);
+    } catch {
+      encryptionKey = randomBytes(32);
+      await mkdir(dataDir, { recursive: true });
+      await writeFile(ENCRYPTION_KEY_FILE, encryptionKey, { mode: 0o600 });
+    }
+    return encryptionKey;
+  })();
 }
 
 function encryptField(plaintext) {
