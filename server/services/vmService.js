@@ -413,14 +413,4 @@ export class VmService {
       name: object.props.name?.[0] ?? object.id
     };
   }
-
-  uniqueOptions(options) {
-    const seen = new Set();
-    return options.filter((option) => {
-      const key = option.name;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
 }
