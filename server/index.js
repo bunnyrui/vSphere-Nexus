@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob } from "./jobs.js";
 import { makeViUrl, runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
-import { discoverVsphere, checkVmNameConflicts, powerOffAndDestroy } from "./vsphere.js";
+import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
 
 const app = express();
 const port = Number(process.env.PORT || 4173);

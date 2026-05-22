@@ -443,6 +443,10 @@ textarea {
   color: #c0392b;
 }
 
+.muted {
+  color: #7d8b99;
+}
+
 .run {
   color: #2878a8;
 }

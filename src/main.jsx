@@ -296,7 +296,6 @@ function App() {
     setProbe(null);
     setInventory(null);
     setDatastoreInfo(null);
-    setSelectedVmIds(new Set());
     setProbing(true);
     try {
       const response = await fetch("/api/targets/discover", {
@@ -321,7 +320,6 @@ function App() {
     setProbe(null);
     setInventory(null);
     setDatastoreInfo(null);
-    setSelectedVmIds(new Set());
   }
 
   async function saveAsTemplate() {
