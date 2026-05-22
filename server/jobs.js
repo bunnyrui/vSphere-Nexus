@@ -436,7 +436,7 @@ async function runDestroyJob(job, target, vmIds) {
       try {
         appendLog(job, "system", `正在销毁: ${vmId}...`);
         // First try to power off if it's on (simple best effort)
-        try { await service.powerOff(vmId); } catch (e) {}
+        try { await service.powerOff(vmId); } catch (e) { appendLog(job, "system", `关机跳过: ${e.message}`); }
         
         await service.destroy(vmId);
         job.progress.completed += 1;
