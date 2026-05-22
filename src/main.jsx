@@ -15,6 +15,7 @@ import {
   Play,
   Plus,
   Power,
+  PowerOff,
   RefreshCw,
   RotateCcw,
   Server,
@@ -148,6 +149,8 @@ function App() {
   const [warnings, setWarnings] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [datastoreInfo, setDatastoreInfo] = useState(null);
+  const [selectedVmIds, setSelectedVmIds] = useState(new Set());
+  const [destroying, setDestroying] = useState(false);
 
   const activeJob = jobs.find((job) => job.id === activeJobId) ?? jobs[0];
   const effectiveVms = getEffectiveVms(form);
@@ -360,6 +363,51 @@ function App() {
   async function deleteTemplate(name) {
     await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE", headers: authHeaders() });
     await loadTemplates();
+  }
+
+  function toggleVmSelect(vmId) {
+    setSelectedVmIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(vmId)) next.delete(vmId);
+      else next.add(vmId);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVms() {
+    const vms = inventory?.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
+    if (selectedVmIds.size === vms.length && vms.length > 0) {
+      setSelectedVmIds(new Set());
+    } else {
+      setSelectedVmIds(new Set(vms.map((v) => v.id)));
+    }
+  }
+
+  async function destroySelectedVms() {
+    if (!selectedVmIds.size) return;
+    const names = (inventory?.inventoryItems ?? [])
+      .filter((item) => selectedVmIds.has(item.id))
+      .map((item) => item.name);
+    if (!confirm(`确认关机并删除以下 ${names.length} 台虚拟机？\n\n${names.slice(0, 10).join("\n")}${names.length > 10 ? `\n...还有 ${names.length - 10} 台` : ""}`)) return;
+    setDestroying(true);
+    setError("");
+    try {
+      const response = await fetch("/api/vms/destroy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ target: form.target, vmIds: [...selectedVmIds] })
+      });
+      if (response.status === 401) { setAuthed(false); return; }
+      const data = await response.json();
+      if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
+      setActiveJobId(data.job.id);
+      setSelectedVmIds(new Set());
+      await refreshJobs();
+    } catch (err) {
+      setError(err.message || "销毁失败");
+    } finally {
+      setDestroying(false);
+    }
   }
 
   return (
@@ -632,6 +680,58 @@ function App() {
               <Play size={18} />
               {form.dryRun ? "生成部署预览" : "开始批量部署"}
             </button>
+
+            {inventory && (
+              <section className="nestedSection span2" style={{ borderTopColor: "#f3c8c1" }}>
+                <div className="sectionHeader">
+                  <SectionTitle icon={<Trash2 />} title="虚拟机清理" />
+                  <button
+                    type="button"
+                    className="dangerAction"
+                    disabled={!selectedVmIds.size || destroying}
+                    onClick={destroySelectedVms}
+                  >
+                    <PowerOff size={16} />
+                    {destroying ? "执行中..." : `关机并删除 (${selectedVmIds.size})`}
+                  </button>
+                </div>
+                <div className="hintBox">
+                  勾选要清理的虚拟机，点击"关机并删除"将强制关机后删除。此操作不可撤销。
+                </div>
+                <div className="vmCleanupList">
+                  <label className="vmCleanupRow vmCleanupHeader">
+                    <input
+                      type="checkbox"
+                      checked={(() => {
+                        const vms = inventory?.inventoryItems?.filter((item) => item.kind === "VM") ?? [];
+                        return vms.length > 0 && vms.every((v) => selectedVmIds.has(v.id));
+                      })()}
+                      onChange={toggleSelectAllVms}
+                    />
+                    <span>名称</span>
+                    <span>数据中心</span>
+                    <span>类型</span>
+                  </label>
+                  {inventory.inventoryItems
+                    ?.filter((item) => item.kind === "VM")
+                    .map((item) => (
+                      <label key={item.id} className="vmCleanupRow">
+                        <input
+                          type="checkbox"
+                          checked={selectedVmIds.has(item.id)}
+                          onChange={() => toggleVmSelect(item.id)}
+                        />
+                        <span>{item.name}</span>
+                        <span className="muted">{item.datacenter}</span>
+                        <span className="muted">{item.kind}</span>
+                      </label>
+                    ))}
+                  {!(inventory.inventoryItems?.some((item) => item.kind === "VM")) && (
+                    <div className="hintBox">当前环境中没有普通虚拟机（模板不会显示在这里）。</div>
+                  )}
+                </div>
+              </section>
+            )}
           </form>
 
           <JobPanel

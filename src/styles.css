@@ -337,6 +337,60 @@ textarea {
   font-weight: 700;
 }
 
+.dangerAction {
+  border: 0;
+  border-radius: 8px;
+  background: #c0392b;
+  color: white;
+  min-height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.dangerAction:disabled {
+  opacity: 0.5;
+}
+
+.vmCleanupList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid #e0e8ef;
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.vmCleanupRow {
+  display: grid;
+  grid-template-columns: 32px 1fr 120px 60px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #edf2f6;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vmCleanupRow:last-child {
+  border-bottom: none;
+}
+
+.vmCleanupHeader {
+  background: #f7fafc;
+  font-weight: 600;
+  color: #52616f;
+  cursor: pointer;
+}
+
+.vmCleanupRow .muted {
+  color: #7d8b99;
+}
+
 .secondaryAction {
   border: 1px solid #cfd8e3;
   border-radius: 8px;

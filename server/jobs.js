@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOvfToolArgs, renderTemplate, runOvfTool, stringifyCommand } from "./ovftool.js";
+import { powerOffAndDestroy } from "./vsphere.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(__dirname, "..", "data");
@@ -137,6 +138,33 @@ export function retryFailed(id) {
   scheduleSave();
 
   runRetryJob(job, payload, failedIndices);
+  return job;
+}
+
+export async function createDestroyJob(target, vmIds) {
+  const id = nanoid(10);
+  const job = {
+    id,
+    type: "destroy",
+    status: "queued",
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    dryRun: false,
+    concurrency: 1,
+    progress: { total: vmIds.length, completed: 0, failed: 0 },
+    commands: [],
+    logs: [],
+    vmResults: vmIds.map((vmId, index) => ({
+      index,
+      name: vmId,
+      status: "pending"
+    }))
+  };
+
+  jobs.set(id, job);
+  scheduleSave();
+  runDestroyJob(job, target, vmIds);
   return job;
 }
 
@@ -276,6 +304,50 @@ async function runRetryJob(job, payload, failedIndices) {
       appendLog(job, "stderr", `重试异常: ${err.message}`);
     }
     console.error(`runRetryJob ${job.id} error:`, err);
+  } finally {
+    controllers.delete(job.id);
+    scheduleSave();
+  }
+}
+
+async function runDestroyJob(job, target, vmIds) {
+  const controller = new AbortController();
+  controllers.set(job.id, controller);
+
+  try {
+    job.status = "running";
+    job.startedAt = new Date().toISOString();
+    appendLog(job, "system", `开始销毁 ${vmIds.length} 台虚拟机`);
+
+    await powerOffAndDestroy(target, vmIds, {
+      onProgress: (vmId, status) => {
+        const idx = vmIds.indexOf(vmId);
+        if (idx < 0) return;
+        if (status === "succeeded") {
+          job.progress.completed += 1;
+          job.vmResults[idx].status = "succeeded";
+          appendLog(job, "system", `${vmId} 已关机并删除`);
+        } else {
+          job.progress.failed += 1;
+          job.vmResults[idx].status = "failed";
+          appendLog(job, "stderr", `${vmId} 销毁失败`);
+        }
+        scheduleSave();
+      }
+    });
+
+    if (job.status !== "cancelled") {
+      job.status = job.progress.failed > 0 ? "failed" : "succeeded";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "system", job.status === "succeeded" ? "全部销毁完成" : "销毁完成，但存在失败项");
+    }
+  } catch (err) {
+    if (job.status !== "cancelled") {
+      job.status = "failed";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "stderr", `销毁异常: ${err.message}`);
+    }
+    console.error(`runDestroyJob ${job.id} error:`, err);
   } finally {
     controllers.delete(job.id);
     scheduleSave();

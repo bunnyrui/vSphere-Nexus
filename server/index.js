@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import express from "express";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore } from "./jobs.js";
+import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob } from "./jobs.js";
 import { makeViUrl, runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
-import { discoverVsphere, checkVmNameConflicts } from "./vsphere.js";
+import { discoverVsphere, checkVmNameConflicts, powerOffAndDestroy } from "./vsphere.js";
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -147,6 +147,26 @@ app.post("/api/jobs/:id/retry", (req, res) => {
   const job = retryFailed(req.params.id);
   if (!job) return res.status(400).json({ error: "Job not found or not in failed state" });
   res.json({ job });
+});
+
+app.post("/api/vms/destroy", async (req, res) => {
+  const { target, vmIds } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+  if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择要删除的虚拟机"] });
+
+  try {
+    const inventory = await discoverVsphere(normalizedTarget);
+    const validIds = new Set(inventory.inventoryItems.map((item) => item.id));
+    const ids = vmIds.filter((id) => validIds.has(id));
+    if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
+
+    const job = await createDestroyJob(normalizedTarget, ids);
+    res.status(201).json({ job });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "操作失败"] });
+  }
 });
 
 app.post("/api/deployments/check", async (req, res) => {

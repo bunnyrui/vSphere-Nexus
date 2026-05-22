@@ -159,6 +159,75 @@ async function retrieveInventory(target, cookie, rootFolder, propertyCollector) 
   return parseObjects(text);
 }
 
+export async function powerOffAndDestroy(target, vmIds, { onProgress } = {}) {
+  const cached = getCachedSession(target);
+  let serviceContent;
+  let cookie;
+
+  if (cached) {
+    serviceContent = cached.serviceContent;
+    cookie = cached.cookie;
+  } else {
+    serviceContent = await retrieveServiceContent(target);
+    cookie = await login(target, serviceContent.sessionManager);
+    setCachedSession(target, cookie, serviceContent);
+  }
+
+  const results = [];
+
+  for (const vmId of vmIds) {
+    try {
+      const powerState = await getVmPowerState(target.host, cookie, vmId);
+      if (powerState === "poweredOn") {
+        await soap(target.host, envelope(`
+          <PowerOffVM_Task xmlns="${VIM_NS}">
+            ${ref("_this", { type: "VirtualMachine", id: vmId })}
+          </PowerOffVM_Task>
+        `), cookie);
+        await waitForTask(target.host, cookie, serviceContent.propertyCollector);
+      }
+
+      await soap(target.host, envelope(`
+        <Destroy_Task xmlns="${VIM_NS}">
+          ${ref("_this", { type: "VirtualMachine", id: vmId })}
+        </Destroy_Task>
+      `), cookie);
+
+      results.push({ id: vmId, status: "succeeded" });
+    } catch (err) {
+      results.push({ id: vmId, status: "failed", error: err.message });
+    }
+    onProgress?.(vmId, results.at(-1).status);
+  }
+
+  return results;
+}
+
+async function getVmPowerState(host, cookie, vmId) {
+  const body = envelope(`
+    <RetrievePropertiesEx xmlns="${VIM_NS}">
+      ${ref("_this", { type: "PropertyCollector", id: "ha-property-collector" })}
+      <specSet>
+        <propSet><type>VirtualMachine</type><all>false</all><pathSet>runtime.powerState</pathSet></propSet>
+        <objectSet>
+          ${ref("obj", { type: "VirtualMachine", id: vmId })}
+          <skip>false</skip>
+        </objectSet>
+      </specSet>
+      <options/>
+    </RetrievePropertiesEx>
+  `);
+  const { text } = await soap(host, body, cookie);
+  const match = text.match(/<pathSet>runtime\.powerState<\/pathSet>[\s\S]*?<val[^>]*>([^<]+)<\/val>/);
+  return match?.[1] ?? "unknown";
+}
+
+async function waitForTask(host, cookie, propertyCollector) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 async function soap(host, body, cookie = "") {
   const savedTls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
