@@ -1,6 +1,7 @@
 import { VimClient, firstRef, escapeXml, decodeXml } from "./vimClient.js";
 
 const VIM_NS = "urn:vim25";
+const SESSION_TTL = 10 * 60 * 1000;
 const sessionCache = new Map();
 
 export class VmService {
@@ -14,8 +15,12 @@ export class VmService {
     const cacheKey = `${this.target.host}:${this.target.username}`;
     const cached = sessionCache.get(cacheKey);
     if (cached) {
-      this.client.setCookie(cached.cookie);
-      this.serviceContent = cached.serviceContent;
+      if (Date.now() - cached.createdAt > SESSION_TTL) {
+        sessionCache.delete(cacheKey);
+      } else {
+        this.client.setCookie(cached.cookie);
+        this.serviceContent = cached.serviceContent;
+      }
     }
 
     if (!this.serviceContent) {
@@ -36,7 +41,7 @@ export class VmService {
         </Login>
       `;
       const loginRes = await this.client.soap(loginBody);
-      sessionCache.set(cacheKey, { cookie: loginRes.cookie, serviceContent: this.serviceContent });
+      sessionCache.set(cacheKey, { cookie: loginRes.cookie, serviceContent: this.serviceContent, createdAt: Date.now() });
     }
   }
 
