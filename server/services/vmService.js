@@ -117,7 +117,7 @@ export class VmService {
     
     // Attempt 1: AcquireTicket (More common across versions)
     try {
-      const body = `<AcquireTicket xmlns="urn:vim25"><_this type="VirtualMachine">${vmId}</_this><ticketType>webmks</ticketType></AcquireTicket>`;
+      const body = `<AcquireTicket xmlns="urn:vim25"><_this type="VirtualMachine">${escapeXml(vmId)}</_this><ticketType>webmks</ticketType></AcquireTicket>`;
       const { text } = await this.client.soap(body);
       const ticket = this.client.textTag(text, "ticket");
       const host = this.client.textTag(text, "host");
@@ -134,7 +134,7 @@ export class VmService {
     } catch (e) { console.log("AcquireTicket (webmks) failed:", e.message); }
 
     // Attempt 2: AcquireWebMksTicket (Modern)
-    const bodyM = `<AcquireWebMksTicket xmlns="urn:vim25"><_this type="VirtualMachine">${vmId}</_this></AcquireWebMksTicket>`;
+    const bodyM = `<AcquireWebMksTicket xmlns="urn:vim25"><_this type="VirtualMachine">${escapeXml(vmId)}</_this></AcquireWebMksTicket>`;
     const { text: textM } = await this.client.soap(bodyM);
     return {
       ticket: this.client.textTag(textM, "ticket"),
