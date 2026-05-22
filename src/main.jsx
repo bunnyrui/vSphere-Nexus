@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   AlertTriangle,
-  Bookmark,
   CheckCircle2,
   Copy,
   Cpu,
@@ -144,9 +143,6 @@ function App() {
   const [probing, setProbing] = useState(false);
   const [inventory, setInventory] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [templates, setTemplates] = useState([]);
-  const [showTemplateDialog, setShowTemplateDialog] = useState(false);
-  const [templateName, setTemplateName] = useState("");
   const [warnings, setWarnings] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [datastoreInfo, setDatastoreInfo] = useState(null);
@@ -164,13 +160,6 @@ function App() {
     const data = await response.json();
     setJobs(data.jobs ?? []);
     if (!activeJobId && data.jobs?.[0]) setActiveJobId(data.jobs[0].id);
-  }
-
-  async function loadTemplates() {
-    const response = await fetch("/api/templates", { headers: authHeaders() });
-    if (response.status === 401) { setAuthed(false); return; }
-    const data = await response.json();
-    setTemplates(data.templates ?? []);
   }
 
   async function checkAuth() {
@@ -195,7 +184,6 @@ function App() {
   useEffect(() => {
     if (!authed) return;
     refreshJobs();
-    loadTemplates();
   }, [authed]);
 
   useEffect(() => {
@@ -320,38 +308,6 @@ function App() {
     setDatastoreInfo(null);
   }
 
-  async function saveAsTemplate() {
-    if (!templateName.trim()) return;
-    const { target, ...rest } = form;
-    const { password, ...safeTarget } = target;
-    try {
-      const response = await fetch("/api/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ name: templateName.trim(), config: { ...rest, target: safeTarget } })
-      });
-      if (!response.ok) throw new Error("保存失败");
-      setShowTemplateDialog(false);
-      setTemplateName("");
-      await loadTemplates();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function loadTemplate(name) {
-    const tpl = templates.find((t) => t.name === name);
-    if (!tpl) return;
-    const session = JSON.parse(sessionStorage.getItem(sessionStorageKey) || "{}");
-    const loaded = mergeState(defaultState, tpl.config, session);
-    loaded.sourceInventoryPath = tpl.config.sourceInventoryPath || "";
-    loaded.networkMappings = tpl.config.networkMappings || defaultState.networkMappings;
-    setForm(loaded);
-    setInventory(null);
-    setProbe(null);
-    setDatastoreInfo(null);
-  }
-
   return (
     <main className="shell">
       <aside className="sidebar">
@@ -399,34 +355,7 @@ function App() {
             <p>MassOVA Console</p>
             <h1>vSphere 批量部署与虚拟机管理</h1>
           </div>
-          <div className="topbarActions">
-            {templates.length > 0 && (
-              <select className="templateSelect" value="" onChange={(e) => { if (e.target.value) loadTemplate(e.target.value); }}>
-                <option value="">加载模板...</option>
-                {templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-              </select>
-            )}
-            <button type="button" className="secondaryAction" onClick={() => setShowTemplateDialog(true)}>
-              <Bookmark size={16} /> 保存模板
-            </button>
-          </div>
         </header>
-
-        {showTemplateDialog && (
-          <div className="dialogOverlay" onClick={() => setShowTemplateDialog(false)}>
-            <div className="dialog" onClick={(e) => e.stopPropagation()}>
-              <h3>保存为部署模板</h3>
-              <div className="field">
-                <label>模板名称</label>
-                <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="例如：生产环境基础模板" />
-              </div>
-              <div className="dialogActions">
-                <button className="secondaryAction" onClick={() => setShowTemplateDialog(false)}>取消</button>
-                <button className="primaryAction" onClick={saveAsTemplate}>保存</button>
-              </div>
-            </div>
-          </div>
-        )}
 
         <section className="panel connectionPanel">
           <SectionTitle icon={<Server />} title="连接 vSphere" />

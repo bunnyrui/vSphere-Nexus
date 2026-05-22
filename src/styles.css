@@ -623,57 +623,6 @@ textarea {
   margin-bottom: 12px;
 }
 
-.topbarActions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.templateSelect {
-  border: 1px solid #cfd8e3;
-  border-radius: 8px;
-  min-height: 42px;
-  padding: 0 10px;
-  color: #334e5c;
-  background: #fff;
-}
-
-.dialogOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  display: grid;
-  place-items: center;
-  z-index: 100;
-}
-
-.dialog {
-  background: #fff;
-  border-radius: 12px;
-  padding: 24px;
-  width: 400px;
-  max-width: 90vw;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-}
-
-.dialog h3 {
-  margin: 0 0 16px;
-}
-
-.dialogActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.dialogActions .primaryAction,
-.dialogActions .secondaryAction {
-  grid-column: auto;
-  min-height: 38px;
-  padding: 0 18px;
-}
-
 .overviewStats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));

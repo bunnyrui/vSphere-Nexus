@@ -338,58 +338,6 @@ app.post("/api/targets/discover", async (req, res) => {
   }
 });
 
-app.get("/api/templates", async (_req, res) => {
-  try {
-    const { readFile } = await import("node:fs/promises");
-    const templatesFile = join(__dirname, "..", "data", "templates.json");
-    const data = await readFile(templatesFile, "utf-8");
-    res.json({ templates: JSON.parse(data) });
-  } catch {
-    res.json({ templates: [] });
-  }
-});
-
-app.post("/api/templates", async (req, res) => {
-  const { name, config } = req.body;
-  if (!name || !config) return res.status(400).json({ errors: ["需要模板名称和配置"] });
-
-  const { readFile: rf, writeFile: wf, mkdir } = await import("node:fs/promises");
-  const templatesFile = join(__dirname, "..", "data", "templates.json");
-  let templates = [];
-  try {
-    templates = JSON.parse(await rf(templatesFile, "utf-8"));
-  } catch {
-  }
-
-  const existing = templates.findIndex((t) => t.name === name);
-  const entry = { name, config, updatedAt: new Date().toISOString() };
-  if (existing >= 0) {
-    templates[existing] = { ...templates[existing], ...entry };
-  } else {
-    entry.createdAt = new Date().toISOString();
-    templates.push(entry);
-  }
-
-  await mkdir(dirname(templatesFile), { recursive: true });
-  await wf(templatesFile, JSON.stringify(templates, null, 2), "utf-8");
-  res.json({ ok: true, templates });
-});
-
-app.delete("/api/templates/:name", async (req, res) => {
-  const { readFile: rf, writeFile: wf, mkdir } = await import("node:fs/promises");
-  const templatesFile = join(__dirname, "..", "data", "templates.json");
-  let templates = [];
-  try {
-    templates = JSON.parse(await rf(templatesFile, "utf-8"));
-  } catch {
-  }
-
-  templates = templates.filter((t) => t.name !== req.params.name);
-  await mkdir(dirname(templatesFile), { recursive: true });
-  await wf(templatesFile, JSON.stringify(templates, null, 2), "utf-8");
-  res.json({ ok: true, templates });
-});
-
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(distDir));
   app.get(/.*/, (_req, res) => res.sendFile(join(distDir, "index.html")));
