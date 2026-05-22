@@ -158,14 +158,9 @@ export function runOvfTool(args, { signal, onLine }) {
     const env = { ...process.env };
     const currentPlatform = platform();
     
-    // Auto-inject library paths if running from our bundled bin folders
     if (ovfPath.includes("/bin/")) {
       const binDir = dirname(ovfPath);
       const libDir = join(binDir, "lib");
-      
-      // On some platforms (like Linux), libraries might be in the same folder as the binary
-      // On others (like macOS), they are in a 'lib' subfolder.
-      // We'll check for both and add the one that exists.
       const pathsToAdd = [binDir, libDir];
       
       if (currentPlatform === "darwin") {
@@ -181,6 +176,14 @@ export function runOvfTool(args, { signal, onLine }) {
     let stdout = "";
     let stderr = "";
 
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill("SIGTERM");
+        resolve({ code: 124, stdout, stderr: `${stderr}ovftool 进程超时 (30分钟) 已终止` });
+      }
+    }, 30 * 60 * 1000);
+
     const handleChunk = (source) => (chunk) => {
       const text = chunk.toString();
       if (source === "stdout") stdout += text;
@@ -194,6 +197,7 @@ export function runOvfTool(args, { signal, onLine }) {
     child.stderr.on("data", handleChunk("stderr"));
 
     child.on("error", (error) => {
+      clearTimeout(timeout);
       onLine?.("stderr", error.message);
       if (!settled) {
         settled = true;
@@ -202,6 +206,7 @@ export function runOvfTool(args, { signal, onLine }) {
     });
 
     child.on("close", (code) => {
+      clearTimeout(timeout);
       if (!settled) {
         settled = true;
         resolve({ code, stdout, stderr });
