@@ -47,6 +47,7 @@ export const JobsPage = () => {
   const [logs, setLogs] = React.useState([]);
   const logEndRef = useRef(null);
   const eventSourceRef = useRef(null);
+  const seenLogsRef = useRef(new Set());
 
   const activeJob = jobs.find(j => j.id === activeJobId) || jobs[0];
 
@@ -64,6 +65,7 @@ export const JobsPage = () => {
     }
 
     setLogs([]);
+    seenLogsRef.current.clear();
     
     // Add cache buster and explicit token for reliable connection
     const url = `/api/jobs/${activeJob.id}/events?t=${Date.now()}${token ? `&token=${token}` : ''}`;
@@ -73,11 +75,10 @@ export const JobsPage = () => {
     es.addEventListener('log', (e) => {
       try {
         const log = JSON.parse(e.data);
-        setLogs(prev => {
-          // Prevent duplicates if SSE reconnects
-          if (prev.some(l => l.at === log.at && l.message === log.message)) return prev;
-          return [...prev, log];
-        });
+        const key = `${log.at}:${log.message}`;
+        if (seenLogsRef.current.has(key)) return;
+        seenLogsRef.current.add(key);
+        setLogs(prev => [...prev, log]);
       } catch (err) {
         console.error('Failed to parse log:', err);
       }
