@@ -163,6 +163,64 @@ async function retrieveInventory(target, cookie, rootFolder, propertyCollector) 
   return parseObjects(text);
 }
 
+export async function powerControlVms(target, vmIds, action, { onProgress } = {}) {
+  const cached = getCachedSession(target);
+  let serviceContent;
+  let cookie;
+
+  if (cached) {
+    serviceContent = cached.serviceContent;
+    cookie = cached.cookie;
+  } else {
+    serviceContent = await retrieveServiceContent(target);
+    cookie = await login(target, serviceContent.sessionManager);
+    setCachedSession(target, cookie, serviceContent);
+  }
+
+  const soapAction = action === "on" ? "PowerOnVM_Task"
+    : action === "reset" ? "ResetVM_Task"
+    : "PowerOffVM_Task";
+  const label = action === "on" ? "开机" : action === "reset" ? "重启" : "关机";
+  const results = [];
+
+  for (const vmId of vmIds) {
+    try {
+      if (action === "off" || action === "reset") {
+        const state = await getVmPowerState(target.host, cookie, vmId);
+        if (state !== "poweredOn") {
+          results.push({ id: vmId, status: "succeeded", skipped: true });
+          onProgress?.(vmId, "succeeded");
+          continue;
+        }
+      }
+      if (action === "on") {
+        const state = await getVmPowerState(target.host, cookie, vmId);
+        if (state === "poweredOn") {
+          results.push({ id: vmId, status: "succeeded", skipped: true });
+          onProgress?.(vmId, "succeeded");
+          continue;
+        }
+      }
+
+      const result = await soap(target.host, envelope(`
+        <${soapAction} xmlns="${VIM_NS}">
+          ${ref("_this", { type: "VirtualMachine", id: vmId })}
+        </${soapAction}>
+      `), cookie);
+      const taskMor = parseTaskReturn(result.text);
+      if (taskMor) {
+        await waitForTask(target.host, cookie, taskMor);
+      }
+      results.push({ id: vmId, status: "succeeded" });
+    } catch (err) {
+      results.push({ id: vmId, status: "failed", error: err.message });
+    }
+    onProgress?.(vmId, results.at(-1).status);
+  }
+
+  return results;
+}
+
 export async function powerOffAndDestroy(target, vmIds, { onProgress } = {}) {
   const cached = getCachedSession(target);
   let serviceContent;

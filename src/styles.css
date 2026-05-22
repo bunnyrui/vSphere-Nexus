@@ -772,7 +772,7 @@ textarea {
 
 .vmOverviewRow {
   display: grid;
-  grid-template-columns: 1.4fr 70px 110px 50px 70px 70px 1fr 130px;
+  grid-template-columns: 32px 1.4fr 70px 110px 50px 70px 70px 1fr 130px;
   gap: 6px;
   align-items: center;
   padding: 8px 12px;
@@ -819,6 +819,39 @@ textarea {
 .powerBadge.off {
   background: #fff4f1;
   color: #9a3412;
+}
+
+.overviewActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.csvButton {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  gap: 6px;
+}
+
+.overviewBulkBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid #b8d4e8;
+  border-radius: 8px;
+  background: #edf5fc;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.powerButton {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  gap: 4px;
 }
 
 .loginPage {
@@ -901,7 +934,7 @@ textarea {
   }
 
   .vmOverviewRow {
-    min-width: 800px;
+    min-width: 840px;
   }
 }
 

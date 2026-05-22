@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { buildOvfToolArgs, renderTemplate, runOvfTool, stringifyCommand } from "./ovftool.js";
-import { powerOffAndDestroy } from "./vsphere.js";
+import { powerOffAndDestroy, powerControlVms } from "./vsphere.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(__dirname, "..", "data");
@@ -236,6 +236,36 @@ export async function createDestroyJob(target, vmIds) {
   return job;
 }
 
+export async function createPowerControlJob(target, vmIds, action) {
+  const uniqueVmIds = [...new Set(vmIds)];
+  const id = nanoid(10);
+  const label = action === "on" ? "开机" : action === "reset" ? "重启" : "关机";
+  const job = {
+    id,
+    type: "power",
+    status: "queued",
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    dryRun: false,
+    concurrency: 1,
+    progress: { total: uniqueVmIds.length, completed: 0, failed: 0 },
+    commands: [],
+    logs: [],
+    vmResults: uniqueVmIds.map((vmId, index) => ({
+      index,
+      name: vmId,
+      status: "pending"
+    }))
+  };
+
+  jobs.set(id, job);
+  payloads.set(id, { type: "power", target, vmIds: uniqueVmIds, action });
+  scheduleSave();
+  runPowerControlJob(job, target, uniqueVmIds, action).catch((err) => console.error(`runPowerControlJob ${job.id} unhandled:`, err));
+  return job;
+}
+
 function appendLog(job, stream, message) {
   job.logs.push({
     at: new Date().toISOString(),
@@ -440,4 +470,50 @@ async function runWithConcurrency(indices, concurrency, taskFn) {
     workers.push(next());
   }
   await Promise.all(workers);
+}
+
+async function runPowerControlJob(job, target, vmIds, action) {
+  const controller = new AbortController();
+  controllers.set(job.id, controller);
+
+  const label = action === "on" ? "开机" : action === "reset" ? "重启" : "关机";
+
+  try {
+    job.status = "running";
+    job.startedAt = new Date().toISOString();
+    appendLog(job, "system", `开始批量${label} ${vmIds.length} 台虚拟机`);
+
+    await powerControlVms(target, vmIds, action, {
+      onProgress: (vmId, status) => {
+        const idx = vmIds.indexOf(vmId);
+        if (idx < 0) return;
+        if (status === "succeeded") {
+          job.progress.completed += 1;
+          job.vmResults[idx].status = "succeeded";
+          appendLog(job, "system", `${vmId} ${label}完成`);
+        } else {
+          job.progress.failed += 1;
+          job.vmResults[idx].status = "failed";
+          appendLog(job, "stderr", `${vmId} ${label}失败`);
+        }
+        scheduleSave();
+      }
+    });
+
+    if (job.status !== "cancelled") {
+      job.status = job.progress.failed > 0 ? "failed" : "succeeded";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "system", job.status === "succeeded" ? `全部${label}完成` : `${label}完成，但存在失败项`);
+    }
+  } catch (err) {
+    if (job.status !== "cancelled") {
+      job.status = "failed";
+      job.finishedAt = new Date().toISOString();
+      appendLog(job, "stderr", `批量${label}异常: ${err.message}`);
+    }
+    console.error(`runPowerControlJob ${job.id} error:`, err);
+  } finally {
+    controllers.delete(job.id);
+    scheduleSave();
+  }
 }

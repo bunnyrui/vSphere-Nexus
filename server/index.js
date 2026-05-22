@@ -4,7 +4,7 @@ import express from "express";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, constants as fsConstants } from "node:fs/promises";
-import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob } from "./jobs.js";
+import { createJob, getJob, listJobs, cancelJob, retryFailed, initStore, createDestroyJob, createPowerControlJob } from "./jobs.js";
 import { makeViUrl, runOvfTool, resolveOvfToolPath, getOvfToolPath } from "./ovftool.js";
 import { discoverVsphere, checkVmNameConflicts, powerOffAndDestroy } from "./vsphere.js";
 
@@ -235,6 +235,27 @@ app.post("/api/vms/destroy", async (req, res) => {
     if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
 
     const job = await createDestroyJob(normalizedTarget, ids);
+    res.status(201).json({ job });
+  } catch (error) {
+    res.status(502).json({ errors: [error.message || "操作失败"] });
+  }
+});
+
+app.post("/api/vms/power", async (req, res) => {
+  const { target, vmIds, action } = req.body ?? {};
+  const normalizedTarget = normalizeTarget(target ?? {});
+  const errors = validateConnectionTarget(normalizedTarget);
+  if (errors.length) return res.status(400).json({ errors });
+  if (!Array.isArray(vmIds) || !vmIds.length) return res.status(400).json({ errors: ["需要选择虚拟机"] });
+  if (!["on", "off", "reset"].includes(action)) return res.status(400).json({ errors: ["操作类型无效，可选: on, off, reset"] });
+
+  try {
+    const inventory = await discoverVsphere(normalizedTarget);
+    const validIds = new Set(inventory.inventoryItems.map((item) => item.id));
+    const ids = vmIds.filter((id) => validIds.has(id));
+    if (!ids.length) return res.status(400).json({ errors: ["没有找到有效的虚拟机"] });
+
+    const job = await createPowerControlJob(normalizedTarget, ids, action);
     res.status(201).json({ job });
   } catch (error) {
     res.status(502).json({ errors: [error.message || "操作失败"] });

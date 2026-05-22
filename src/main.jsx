@@ -525,7 +525,10 @@ function App() {
               onSubmit={submitDeployment} onForceSubmit={forceSubmit} onResetConnection={resetConnection}
             />
           ) : activeTab === "overview" ? (
-            <OverviewTab inventory={inventory} />
+            <OverviewTab
+              inventory={inventory} form={form} error={error} setError={setError}
+              onRefresh={probeTarget}
+            />
           ) : (
             <CleanupTab
               inventory={inventory} error={error} destroying={destroying}
@@ -711,11 +714,14 @@ function CleanupTab({ inventory, error, destroying, selectedVmIds, onToggleVm, o
   );
 }
 
-function OverviewTab({ inventory }) {
+function OverviewTab({ inventory, form, error, setError, onRefresh }) {
   const [sortKey, setSortKey] = useState("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [powering, setPowering] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   if (!inventory) {
     return (
@@ -762,6 +768,74 @@ function OverviewTab({ inventory }) {
     else { setSortKey(key); setSortAsc(true); }
   }
 
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (filtered.length > 0 && selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((v) => v.id)));
+    }
+  }
+
+  async function handlePower(action) {
+    const label = action === "on" ? "开机" : action === "reset" ? "重启" : "关机";
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    if (!confirm(`确认对 ${ids.length} 台虚拟机执行${label}操作？`)) return;
+    setPowering(true);
+    setError("");
+    try {
+      const response = await fetch("/api/vms/power", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ target: form.target, vmIds: ids, action })
+      });
+      if (response.status === 401) return;
+      const data = await response.json();
+      if (!response.ok) throw new Error((data.errors ?? [data.error]).filter(Boolean).join("；"));
+      setSelectedIds(new Set());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPowering(false);
+    }
+  }
+
+  function exportCsv() {
+    const header = "名称,状态,IP地址,CPU(核),内存(MB),存储(GB),操作系统,数据中心,创建时间";
+    const rows = vms.map((v) => [
+      v.name,
+      powerLabel(v.powerState),
+      v.ipAddress || "",
+      v.numCPU || 0,
+      v.memoryMB || 0,
+      v.storageCommitted ? (v.storageCommitted / 1073741824).toFixed(2) : "0",
+      (v.guestOS || "").replace(/,/g, " "),
+      v.datacenter || "",
+      v.createdAt || ""
+    ].join(","));
+    const csv = "\uFEFF" + [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vm-overview-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 200);
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try { await onRefresh(); } finally { setRefreshing(false); }
+  }
+
   function formatCreatedAt(iso) {
     if (!iso) return "-";
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
@@ -778,6 +852,14 @@ function OverviewTab({ inventory }) {
     <div className="panel formPanel">
       <div className="sectionHeader span2">
         <SectionTitle icon={<Server />} title={`虚拟机概览 (${allVms.length} 台)`} />
+        <div className="overviewActions">
+          <button type="button" className="iconButton" onClick={handleRefresh} disabled={refreshing} title="刷新数据">
+            <RefreshCw size={16} />
+          </button>
+          <button type="button" className="secondaryAction csvButton" onClick={exportCsv} disabled={!vms.length}>
+            <Download size={14} /> 导出 CSV
+          </button>
+        </div>
       </div>
 
       <div className="overviewStats span2">
@@ -819,8 +901,26 @@ function OverviewTab({ inventory }) {
         </div>
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="overviewBulkBar span2">
+          <span>已选 {selectedIds.size} 台</span>
+          <button type="button" className="secondaryAction powerButton" onClick={() => handlePower("on")} disabled={powering}>
+            <Power size={14} /> 开机
+          </button>
+          <button type="button" className="secondaryAction powerButton" onClick={() => handlePower("off")} disabled={powering}>
+            <PowerOff size={14} /> 关机
+          </button>
+          <button type="button" className="secondaryAction powerButton" onClick={() => handlePower("reset")} disabled={powering}>
+            <RotateCcw size={14} /> 重启
+          </button>
+        </div>
+      )}
+
+      {error && <div className="alert span2"><ShieldAlert size={16} />{error}</div>}
+
       <div className="vmOverviewList span2">
         <div className="vmOverviewRow vmOverviewHeader">
+          <input type="checkbox" checked={filtered.length > 0 && selectedIds.size === filtered.length} onChange={toggleSelectAll} />
           <span className="sortableHeader" onClick={() => toggleSort("name")}>名称 {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}</span>
           <span className="sortableHeader" onClick={() => toggleSort("powerState")}>状态 {sortKey === "powerState" ? (sortAsc ? "▲" : "▼") : ""}</span>
           <span className="sortableHeader" onClick={() => toggleSort("ipAddress")}>IP 地址 {sortKey === "ipAddress" ? (sortAsc ? "▲" : "▼") : ""}</span>
@@ -831,7 +931,8 @@ function OverviewTab({ inventory }) {
           <span className="sortableHeader" onClick={() => toggleSort("createdAt")}>创建时间 {sortKey === "createdAt" ? (sortAsc ? "▲" : "▼") : ""}</span>
         </div>
         {vms.map((item) => (
-          <div key={item.id} className="vmOverviewRow">
+          <label key={item.id} className="vmOverviewRow">
+            <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} />
             <span className="vmName">{item.name}</span>
             <span>
               <span className={`powerBadge ${item.powerState === "poweredOn" ? "on" : item.powerState === "poweredOff" ? "off" : ""}`}>
@@ -844,7 +945,7 @@ function OverviewTab({ inventory }) {
             <span>{formatBytes(item.storageCommitted)}</span>
             <span className="muted osCell" title={item.guestOS}>{item.guestOS || "-"}</span>
             <span className="muted">{formatCreatedAt(item.createdAt)}</span>
-          </div>
+          </label>
         ))}
         {vms.length === 0 && <div className="emptyState small"><span>没有匹配的虚拟机。</span></div>}
       </div>
