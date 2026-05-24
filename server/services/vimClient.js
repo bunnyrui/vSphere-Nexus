@@ -53,7 +53,7 @@ export class VimClient {
     this.cookie = cookie;
   }
 
-  async soap(body, soapAction = `${VIM_NS}/6.0`) {
+  async soap(body, soapAction = "urn:vim25/6.0") {
     const envelope = this.envelope(body);
     const url = new URL(`https://${this.host}/sdk`);
     const options = {
@@ -65,14 +65,17 @@ export class VimClient {
       }
     };
 
-    const response = await httpsPost(url, options, envelope, 15000);
+    const response = await httpsPost(url, options, envelope);
 
-    const setCookie = response.headers["set-cookie"]?.[0] ?? "";
+    const setCookie = response.headers["set-cookie"];
     if (setCookie) {
-      this.cookie = setCookie.split(";")[0];
+      this.cookie = Array.isArray(setCookie) ? setCookie[0].split(";")[0] : setCookie.split(";")[0];
     }
 
     if (response.status >= 400) {
+      // Check if it's a SOAP fault
+      const fault = this.textTag(response.text, "faultstring") || this.textTag(response.text, "message");
+      if (fault) throw new Error(fault);
       throw new Error(`HTTP ${response.status}: ${response.text.slice(0, 200)}`);
     }
 

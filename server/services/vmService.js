@@ -120,34 +120,50 @@ export class VmService {
   async acquireWebMksTicket(vmId) {
     await this.ensureSession();
     
-    // Attempt 1: AcquireTicket (More common across versions)
+    // Attempt 1: AcquireTicket (Works on ESXi and vCenter)
     try {
-      const body = `<AcquireTicket xmlns="urn:vim25"><_this type="VirtualMachine">${escapeXml(vmId)}</_this><ticketType>webmks</ticketType></AcquireTicket>`;
-      const { text } = await this.client.soap(body);
+      console.log(`[CONSOLE] Requesting ticket for VM ${vmId} on ${this.target.host}`);
+      const body = `
+        <AcquireTicket xmlns="urn:vim25">
+          <_this type="VirtualMachine">${escapeXml(vmId)}</_this>
+          <ticketType>webmks</ticketType>
+        </AcquireTicket>`.trim();
+        
+      const { text } = await this.client.soap(body, "urn:vim25/6.0");
+      
       const ticket = this.client.textTag(text, "ticket");
       const host = this.client.textTag(text, "host");
       const port = this.client.textTag(text, "port");
-      if (ticket && host) {
+      
+      if (ticket) {
+        console.log(`[CONSOLE] Ticket acquired successfully`);
         return { 
           ticket, 
-          host, 
+          host: host || this.target.host, 
           port: parseInt(port || "443"), 
           cfgFile: this.client.textTag(text, "cfgFile"), 
           sslThumbprint: this.client.textTag(text, "sslThumbprint") 
         };
       }
-    } catch (e) { console.log("AcquireTicket (webmks) failed:", e.message); }
-
-    // Attempt 2: AcquireWebMksTicket (Modern)
-    const bodyM = `<AcquireWebMksTicket xmlns="urn:vim25"><_this type="VirtualMachine">${escapeXml(vmId)}</_this></AcquireWebMksTicket>`;
-    const { text: textM } = await this.client.soap(bodyM);
-    return {
-      ticket: this.client.textTag(textM, "ticket"),
-      host: this.client.textTag(textM, "host") || this.target.host,
-      port: parseInt(this.client.textTag(textM, "port") || "443"),
-      cfgFile: this.client.textTag(textM, "cfgFile"),
-      sslThumbprint: this.client.textTag(textM, "sslThumbprint")
-    };
+      console.error(`[CONSOLE] Response received but ticket tag is missing:`, text.slice(0, 300));
+    } catch (e) { 
+      console.error(`[CONSOLE] AcquireTicket failed:`, e.message); 
+      
+      // Fallback for very new vCenter versions if AcquireTicket is deprecated
+      if (e.message.includes("not found") || e.message.includes("resolve")) {
+        console.log(`[CONSOLE] Attempting AcquireWebMksTicket fallback...`);
+        const bodyM = `<AcquireWebMksTicket xmlns="urn:vim25"><_this type="VirtualMachine">${escapeXml(vmId)}</_this></AcquireWebMksTicket>`;
+        const { text: textM } = await this.client.soap(bodyM, "urn:vim25/6.0");
+        return {
+          ticket: this.client.textTag(textM, "ticket"),
+          host: this.client.textTag(textM, "host") || this.target.host,
+          port: parseInt(this.client.textTag(textM, "port") || "443"),
+          cfgFile: this.client.textTag(textM, "cfgFile"),
+          sslThumbprint: this.client.textTag(textM, "sslThumbprint")
+        };
+      }
+      throw e;
+    }
   }
 
   async powerOn(vmId) {

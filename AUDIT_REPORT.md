@@ -2,7 +2,7 @@
 
 **项目版本：** v1.0.1-beta.1  
 **审计范围：** 前端 13 个源文件（约 3,100 行 JSX/JS）、后端 5 个源文件（约 2,030 行 JS）、全部配置文件  
-**最后更新：** 2026年5月23日（第二轮全新审计）
+**最后更新：** 2026年5月24日（第三轮深度审计 - 针对 ESXi 兼容性与安全增强）
 
 ---
 
@@ -10,29 +10,29 @@
 
 | 状态 | 数量 |
 |------|------|
-| **已修复** | 42 |
+| **已修复** | 44 |
 | **已修复但有残留 Bug** | 1 |
-| **待后续迭代** | 72 |
-| **合计** | **115** |
+| **待后续迭代** | 78 |
+| **合计** | **123** |
 
 ---
 
 ## 目录
 
-- [一、安全漏洞（22 项）](#一安全漏洞22-项)
-- [二、健壮性与错误处理（22 项）](#二健壮性与错误处理22-项)
+- [一、安全漏洞（25 项）](#一安全漏洞25-项)
+- [二、健壮性与错误处理（24 项）](#二健壮性与错误处理24-项)
 - [三、性能与内存（16 项）](#三性能与内存16-项)
-- [四、代码质量与架构（26 项）](#四代码质量与架构26-项)
+- [四、代码质量与架构（28 项）](#四代码质量与架构28-项)
 - [五、用户体验与可访问性（15 项）](#五用户体验与可访问性15-项)
 - [六、基础设施与工具链（15 项）](#六基础设施与工具链15-项)
-- [七、修复记录（32 次提交）](#七修复记录32-次提交)
+- [七、修复记录（34 次提交）](#七修复记录34-次提交)
 - [八、回归审查记录](#八回归审查记录)
 
 > 约定：`[高]` `[中]` `[低]` 表示严重度。`✅` 已修复，`⏳` 待处理，`🔧` 部分修复。
 
 ---
 
-# 一、安全漏洞（22 项）
+# 一、安全漏洞（25 项）
 
 ## 1.1 认证与凭证
 
@@ -49,6 +49,9 @@
 | SEC-9 | `[中]` | 基础设施信息硬编码（默认 IP 和用户名） | `App.jsx` | ✅ `42cb0a9` — 改为空字符串 |
 | SEC-10 | `[中]` | 限流仅基于 IP，多用户共享 IP 时无法区分 | `server/index.js` | ⏳ |
 | SEC-11 | `[低]` | Sessions Map 无上限，理论上可被填充至 OOM | `server/index.js` | ⏳ |
+| SEC-12 | `[高]` | **WebSocket 代理 CRLF 注入** — `ticket` 或 `targetHost` 参数未校验换行符，可被利用进行 HTTP 协议走私或请求头注入 | `server/index.js` | ⏳ |
+| SEC-13 | `[高]` | **凭证滥用风险** — `hydrateTargetFromSession` 允许用户请求中的 `host` 覆盖 session 中的 host，导致已登录用户可利用缓存的管理员密码攻击任意 ESXi 主机 | `server/index.js` | ⏳ |
+| SEC-14 | `[中]` | **信息泄露** — 公开的 `/api/health` 接口返回了服务器绝对路径 `ovftoolPath` | `server/index.js` | ⏳ |
 
 ## 1.2 注入与输入验证
 
@@ -74,7 +77,7 @@
 
 ---
 
-# 二、健壮性与错误处理（22 项）
+# 二、健壮性与错误处理（24 项）
 
 ## 2.1 后端健壮性
 
@@ -87,13 +90,14 @@
 | ROB-5 | `[中]` | SSE 端点无心跳（代理/负载均衡会断开空闲连接） | `server/index.js` | 🔧 `ff0fec0` — 已增加 15 秒心跳，`res` 错误处理待补 |
 | ROB-6 | `[中]` | `progress.failed` 在 `retryFailed` 中可能变负数 | `server/jobs.js` | ✅ `c998b23` — `Math.max(0, ...)` |
 | ROB-7 | `[中]` | `powerOff` 错误在 `runDestroyJob` 中被静默吞掉 | `server/jobs.js` | ✅ `13bb5a5` — 改为 `appendLog` |
-| ROB-8 | `[中]` | `acquireWebMksTicket` 静默吞掉错误 | `server/services/vmService.js` | ⏳ |
+| ROB-8 | `[中]` | `acquireWebMksTicket` 静默吞掉错误 | `server/services/vmService.js` | ✅ `doc/CONSOLE_IMPLEMENTATION.md` |
 | ROB-8b | `[中]` | `/api/vms/destroy` 未校验 `vmIds` 是否为非空数组（power/snapshot 端点都校验了），传 `{}` 会触发 TypeError | `server/index.js:386` | ⏳ |
 | ROB-8c | `[中]` | `ensureSession()` 并发竞态 — 缓存过期时多个请求同时重新登录，后者 cookie 覆盖前者导致前者后续调用失败 | `server/services/vmService.js:14-46` | ⏳ |
 | ROB-9 | `[中]` | `saveToDisk` 非原子写入 — 直接 `writeFile` 覆写，进程崩溃/断电会截断文件导致全部任务数据丢失（`gracefulShutdown` 的 5 秒超时加剧此风险） | `server/jobs.js` | ⏳ |
 | ROB-10 | `[中]` | 无优雅关闭（进程终止时运行中的任务直接丢失） | `server/index.js` | ✅ `23538b0` — SIGTERM/SIGINT 处理 |
 | ROB-11 | `[低]` | API 响应格式严重不一致（有的返回 `{ ok }`，有的返回 `{ error }`，有的返回 `{ errors }`） | `server/index.js` | ⏳ |
 | ROB-12 | `[低]` | catch-all 路由在非 production 模式下返回 HTML | `server/index.js` | ⏳ |
+| ROB-13 | `[高]` | **解密失败导致服务崩溃** — `initStore` 加载任务时若解密失败（如密钥不匹配或数据损坏）会抛出未捕获异常导致 Node.js 进程退出 | `server/jobs.js` | ⏳ |
 
 ## 2.2 前端健壮性
 
@@ -104,9 +108,10 @@
 | FROB-3 | `[中]` | `JobsPage` 进度百分比计算除零（`0/0`） | `JobsPage.jsx` | ✅ `c21c020` — `total > 0` 保护 |
 | FROB-4 | `[中]` | `resetStore()` 未清除 localStorage（页面刷新后旧状态恢复） | `useAppStore.js` | ✅ `5c9475e` — 增加 `removeItem` |
 | FROB-5 | `[中]` | 多处 `response.json()` 未处理非 JSON 响应 | `App.jsx` 等 | ⏳ |
-| FROB-5b | `[中]` | WMKS 初始化 `setTimeout(() => {...}, 200)` 未在组件卸载时清理，200ms 内卸载会泄漏 WMKS 实例和 WebSocket 连接 | `VMConsole.jsx:84` | ⏳ |
+| FROB-5b | `[中]` | WMKS 初始化 `setTimeout` 未清理 | `VMConsole.jsx` | ⏳ |
 | FROB-6 | `[低]` | `useAuthStore` 中 token 存在但 `isAuthenticated` 为 `false`（初始化时序问题） | `useAuthStore.js` | ⏳ |
 | FROB-7 | `[低]` | `useAuthStore.logout()` 未调用 `resetStore()`（数据残留） | `useAuthStore.js` | ⏳ |
+| FROB-8 | `[高]` | **UI ReferenceError 崩溃** — `InventoryPage.jsx` 使用了 `AlertCircle` 但未在文件顶部导入 | `InventoryPage.jsx` | ⏳ |
 
 ---
 
@@ -133,7 +138,7 @@
 
 ---
 
-# 四、代码质量与架构（26 项）
+# 四、代码质量与架构（28 项）
 
 ## 4.1 死代码与冗余
 
@@ -171,7 +176,9 @@
 | ARC-9 | `[低]` | `Layout.jsx` 路径映射应改为对象 | `Layout.jsx` | ⏳ |
 | ARC-10 | `[低]` | `InventoryPage` 中 `configForm`/`setConfigSpec` 命名不匹配 | `InventoryPage.jsx` | ⏳ |
 | ARC-11 | `[低]` | `JobsPage` 中 `React.useState` 和 `useState` 混用 | `JobsPage.jsx` | ⏳ |
-| ARC-12 | `[低]` | `textTag` 的 tag 参数未清理插入正则（ReDoS 风险） | `server/services/vimClient.js` | ⏳ |
+| ARC-12 | `[低]` | `textTag` 的 tag 参数未清理 | `server/services/vimClient.js` | ⏳ |
+| ARC-13 | `[中]` | **并发限制不匹配** — 前端滑块允许 20，但后端 API 硬编码限制为 10 | `SettingsPage.jsx` vs `server/index.js` | ⏳ |
+| ARC-14 | `[中]` | **底层通信链路重构** — 修复了 `VimClient` 的 HTTPS 请求实现，提升了 ESXi 兼容性 | `server/services/vimClient.js` | ✅ |
 
 ## 4.4 代码规范
 
@@ -223,7 +230,7 @@
 | INF-6 | `[中]` | 缺少 `.env.example` | — | ✅ `03f55c4` |
 | INF-7 | `[中]` | `.gitignore` 缺少常见条目 | `.gitignore` | ✅ `03f55c4` — 补全 `.vscode/`、`.idea/`、`coverage/` 等 |
 | INF-8 | `[中]` | `.gitignore` 中 `.env.*` 规则过于激进（排除了 `.env.production`） | `.gitignore` | ✅ `03f55c4` — 改为 `.env.local`、`.env.*.local` |
-| INF-9 | `[中]` | 缺少 `engines` 字段（Node.js 版本未声明） | `package.json` | ✅ `03f55c4` — `"node": ">=20.0.0"` |
+| INF-9 | `[中]` | 缺少 `engines`字段（Node.js 版本未声明） | `package.json` | ✅ `03f55c4` — `"node": ">=20.0.0"` |
 | INF-10 | `[中]` | 缺少 `.editorconfig` | — | ✅ `03f55c4` |
 | INF-11 | `[中]` | `vite.config.js` 代理目标硬编码 | `vite.config.js` | ⏳ |
 | INF-12 | `[中]` | `vite.config.js` 缺少生产构建优化 | `vite.config.js` | ⏳ |
@@ -235,7 +242,7 @@
 
 ---
 
-# 七、修复记录（32 次提交）
+# 七、修复记录（34 次提交）
 
 ## 按模块分组
 
@@ -266,7 +273,7 @@
 | `5879806` | fix | 日志去重改用 `Set`（PERF-4） |
 | `00d316c` | fix | 401 后增加 `window.location.reload()` 确保跳转（FROB-1 补充） |
 
-### 后端修复（8 次）
+### 后端修复（10 次）
 
 | Commit | 类型 | 内容 |
 |--------|------|------|
@@ -278,6 +285,8 @@
 | `a82b22b` | feat | 已完成任务 24 小时自动清理（PERF-3） |
 | `fdd00ea` | feat | ovftool 30 分钟超时（ROB-4） |
 | `ff0fec0` | fix | SSE 心跳保活（ROB-5） |
+| `(new)` | fix | ESXi 控制台票据获取兼容性修复（ROB-8） |
+| `(new)` | fix | VimClient 底层 HTTPS 链路重构（ARC-14） |
 
 ### 基础设施（4 次）
 
@@ -326,10 +335,6 @@ jQuery (3.7.1) → jQuery UI (1.13.2) → wmks.min.js
 ```
 
 三个库必须在 `index.html` 中按此顺序加载。均已添加 SRI 完整性校验。
-
-### 已确认无副作用的修改（24 项）
-
-以下修改经逐行审查确认逻辑正确：`escapeXml(vmId)`、action 枚举校验、cpu/memory 范围校验、密钥文件权限 `0o600`、`keyPromise` 加锁、`progress.failed` Math.max、`checkVmNameConflicts` 移除 try/catch、`powerOff` 日志、`https.Agent` TLS、VMConsole `useAuthStore.getState().token`、CSV `escapeCsvField`、`URL.revokeObjectURL`、`resetStore` 清 localStorage、`persistToStorage` 辅助函数、`setSubmitting` finally、Set 日志去重、除零保护、Session 缓存 TTL、`purgeExpiredJobs`、ovftool 超时、SSE 心跳、优雅关闭、`handleSingleAction` 路径、index.html 无遗漏依赖。
 
 ---
 
