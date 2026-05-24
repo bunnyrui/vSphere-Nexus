@@ -281,7 +281,7 @@ export const JobsPage = () => {
                     </button>
                   </div>
                 </div>
-                <p className="text-sm font-semibold truncate">部署 {job.progress.total} 台虚拟机</p>
+                 <p className="text-sm font-semibold truncate">{({power: {'on': '开机', 'reset': '重启', 'off': '关机'}[job.action] || '电源操作', destroy: '销毁', snapshot: '创建快照'})[job.type] || '部署'} {job.progress.total} 台虚拟机</p>
                 <p className="text-[10px] text-muted-foreground">{new Date(job.createdAt).toLocaleTimeString()}</p>
               </button>
             ))}

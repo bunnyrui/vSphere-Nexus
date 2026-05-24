@@ -267,6 +267,7 @@ export async function createPowerControlJob(target, vmIds, action, incomingPaylo
   const job = {
     id,
     type: "power",
+    action,
     status: "queued",
     createdAt: new Date().toISOString(),
     startedAt: null,
