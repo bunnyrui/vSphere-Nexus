@@ -2,6 +2,8 @@
   "name": "vsphere-nexus",
   "version": "1.0.1-beta.1",
   "description": "vSphere Nexus - Professional Virtualization Management Platform",
+  "author": "bunnyruihan",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "scripts": {

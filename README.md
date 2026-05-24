@@ -2,7 +2,7 @@
 
 **vSphere Nexus** 是一款专为企业级虚拟化环境设计的专业管理平台。它提供了一个现代化的、响应式的 Web 界面，用于管理 vCenter Server 和独立 ESXi 主机，支持虚拟机生命周期管理、批量部署及实时 Web 控制台访问。
 
-[![License](https://img.shields.io/badge/license-Private-red.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.1--beta.1-blue.svg)](package.json)
 
 ---
@@ -80,4 +80,4 @@ npm start
 
 ---
 
-© 2026 vSphere Nexus Team. 由 芮晗 开发。
+© 2026 vSphere Nexus Team. 由 bunnyruihan 开发。
