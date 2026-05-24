@@ -58,6 +58,7 @@ export class VmService {
           <propSet><type>Datastore</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>summary.capacity</pathSet><pathSet>summary.freeSpace</pathSet><pathSet>summary.type</pathSet></propSet>
           <propSet><type>Network</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
           <propSet><type>DistributedVirtualPortgroup</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
+          <propSet><type>Folder</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet></propSet>
           <propSet><type>VirtualMachine</type><all>false</all><pathSet>name</pathSet><pathSet>parent</pathSet><pathSet>config.template</pathSet><pathSet>network</pathSet><pathSet>summary.storage.committed</pathSet><pathSet>config.createDate</pathSet><pathSet>runtime.powerState</pathSet><pathSet>config.hardware.numCPU</pathSet><pathSet>config.hardware.memoryMB</pathSet><pathSet>guest.ipAddress</pathSet><pathSet>guest.guestFullName</pathSet></propSet>
           <objectSet>
             ${this.client.ref("obj", this.serviceContent.rootFolder)}
@@ -303,6 +304,26 @@ export class VmService {
   }
 
   normalizeInventory(objects) {
+    const byId = new Map(objects.map((o) => [o.id, o]));
+    const vmFolderNames = new Map();
+    const hostFolderNames = new Map();
+    for (const dc of objects.filter((o) => o.type === "Datacenter")) {
+      const vmFolderRef = dc.props.vmFolder?.[0];
+      const vmFolderId = typeof vmFolderRef === "string" ? vmFolderRef : vmFolderRef?.id;
+      if (vmFolderId) {
+        const vmFolder = byId.get(vmFolderId);
+        const name = vmFolder?.props.name?.[0];
+        if (name) vmFolderNames.set(dc.id, name);
+      }
+      const hostFolderRef = dc.props.hostFolder?.[0];
+      const hostFolderId = typeof hostFolderRef === "string" ? hostFolderRef : hostFolderRef?.id;
+      if (hostFolderId) {
+        const hostFolder = byId.get(hostFolderId);
+        const name = hostFolder?.props.name?.[0];
+        if (name) hostFolderNames.set(dc.id, name);
+      }
+    }
+
     const datacenters = objects.filter((o) => o.type === "Datacenter").map((o) => this.toOption(o));
     const hosts = objects.filter((o) => o.type === "HostSystem").map((o) => this.toOption(o));
     const resourcePools = objects.filter((o) => o.type === "ResourcePool").map((o) => this.toOption(o));
@@ -315,12 +336,22 @@ export class VmService {
     const networks = objects.filter((o) => o.type === "Network" || o.type === "DistributedVirtualPortgroup").map((o) => this.toOption(o));
     const folders = objects.filter((o) => o.type === "Folder").map((o) => this.toOption(o));
 
-    const computeTargets = objects.filter((o) => o.type === "ComputeResource").map((o) => ({
-      id: o.id,
-      name: o.props.name?.[0] || o.id,
-      hosts: (o.props.host || []).map((h) => h.id),
-      resourcePool: (o.props.resourcePool || [])[0]?.id
-    }));
+    const computeTargets = objects.filter((o) => o.type === "ComputeResource").map((o) => {
+      const dc = this.findDatacenter(objects, o);
+      const hostFolderName = dc ? hostFolderNames.get(dc.id) : null;
+      const hostPrefix = hostFolderName ? `${hostFolderName}/` : "";
+      const inventoryPath = dc ? `${dc.props.name?.[0]}/${hostPrefix}${o.props.name?.[0]}` : o.props.name?.[0];
+      return {
+        id: o.id,
+        name: o.props.name?.[0] || o.id,
+        kind: o.type,
+        inventoryPath,
+        hosts: (o.props.host || []).map((h) => h.id),
+        resourcePool: (o.props.resourcePool || [])[0]?.id,
+        datastores: (o.props.datastore || []).map((ds) => ds.id),
+        datacenter: dc?.props.name?.[0]
+      };
+    });
 
     const inventoryItems = objects.filter((o) => o.type === "VirtualMachine").map((o) => {
       const isTemplate = o.props["config.template"]?.[0] === "true";
@@ -332,9 +363,17 @@ export class VmService {
       const ipAddress = o.props["guest.ipAddress"]?.[0];
       const guestOS = o.props["guest.guestFullName"]?.[0];
 
+      const networkRefs = (o.props.network || []).map((n) => typeof n === "string" ? n : n?.id);
+      const sourceNetworks = networkRefs.map((nid) => {
+        const netObj = byId.get(nid);
+        return netObj?.props.name?.[0];
+      }).filter(Boolean);
+
       const dc = this.findDatacenter(objects, o);
       const folderPath = this.folderPathParts(objects, o.props.parent?.[0]?.id, dc).join("/");
-      const inventoryPath = dc ? `${dc.props.name?.[0]}/${folderPath ? folderPath + "/" : ""}${o.props.name?.[0]}` : o.props.name?.[0];
+      const vmFolderName = dc ? vmFolderNames.get(dc.id) : null;
+      const vmPrefix = vmFolderName ? `${vmFolderName}/` : "";
+      const inventoryPath = dc ? `${dc.props.name?.[0]}/${vmPrefix}${folderPath ? folderPath + "/" : ""}${o.props.name?.[0]}` : o.props.name?.[0];
 
       return {
         id: o.id,
@@ -347,7 +386,8 @@ export class VmService {
         numCPU,
         memoryMB,
         ipAddress,
-        guestOS
+        guestOS,
+        sourceNetworks
       };
     }).filter((item) => item.inventoryPath);
 
@@ -374,7 +414,7 @@ export class VmService {
     const vmFolderId = datacenter?.props.vmFolder?.[0]?.id;
     const parts = [];
     const seen = new Set();
-    let current = byId.get(folderId);
+    let current = folderId ? byId.get(folderId) : null;
     while (current && current.id !== vmFolderId && !seen.has(current.id)) {
       seen.add(current.id);
       const name = current.props.name?.[0];

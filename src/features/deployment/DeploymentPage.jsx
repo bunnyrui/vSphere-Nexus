@@ -265,7 +265,10 @@ export const DeploymentPage = () => {
                     <label className="text-sm font-medium text-muted-foreground">选择模板 (OVA/VM)</label>
                     <select 
                       value={target.sourceInventoryPath || ''}
-                      onChange={e => setTarget({ sourceInventoryPath: e.target.value })}
+                      onChange={e => {
+                        setTarget({ sourceInventoryPath: e.target.value });
+                        setDeploymentConfig({ networkMappings: [] });
+                      }}
                       className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-primary/20 outline-none"
                     >
                       <option value="">请选择...</option>
@@ -508,7 +511,7 @@ export const DeploymentPage = () => {
                              <div key={idx} className="flex items-center gap-2 text-[10px] bg-white/40 border border-primary/5 rounded px-2 py-1">
                                <span className="text-muted-foreground">{net}</span>
                                <ChevronRight size={10} className="text-primary/40" />
-                               <span className="font-bold">{inventory?.networks?.[0]?.name || '默认'}</span>
+                                <span className="font-bold">{deploymentConfig.networkMappings.find(m => m.source === net)?.target || '未映射'}</span>
                              </div>
                           ))}
                         </div>

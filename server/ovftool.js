@@ -104,7 +104,7 @@ function encodeInventoryPath(path = "") {
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join("/");
-  return `${hasLeadingSlash ? "/" : ""}${encoded}`;
+  return `${hasLeadingSlash ? "/" : "/"}${encoded}`;
 }
 
 function makeViUrl(target, includePassword = true) {
@@ -198,10 +198,14 @@ export function runOvfTool(args, { signal, onLine }) {
 
     child.on("error", (error) => {
       clearTimeout(timeout);
-      onLine?.("stderr", error.message);
+      let message = error.message;
+      if (error.code === "EPERM" || error.message.includes("error -86") || error.message.includes("bad CPU type")) {
+        message = `ovftool 二进制架构不兼容: 当前系统为 ${process.arch}，但 ovftool 可能是为其他架构编译的。macOS 用户请安装 Rosetta 2 (softwareupdate --install-rosetta) 或获取适配的 ovftool 版本。`;
+      }
+      onLine?.("stderr", message);
       if (!settled) {
         settled = true;
-        resolve({ code: 127, stdout, stderr: `${stderr}${error.message}` });
+        resolve({ code: 127, stdout, stderr: `${stderr}${message}` });
       }
     });
 
