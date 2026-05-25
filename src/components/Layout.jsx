@@ -128,19 +128,6 @@ export const Layout = ({ children }) => {
                </p>
             )}
           </div>
-          
-          <div className="flex items-center gap-4">
-             <button 
-               onClick={handleLogout}
-               className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-secondary transition-colors"
-             >
-               <LogOut size={14} />
-               切换连接
-             </button>
-             <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-               <Server size={18} />
-             </div>
-          </div>
         </header>
 
         <div className="flex-1 overflow-auto p-8 bg-muted/30">
