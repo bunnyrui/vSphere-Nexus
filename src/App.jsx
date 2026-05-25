@@ -4,7 +4,7 @@ import { Server, Database, Activity, Rocket, RefreshCcw } from 'lucide-react';
 import { Layout } from './components/Layout';
 import { useAuthStore } from './store/useAuthStore';
 import { useAppStore } from './store/useAppStore';
-import { cn } from './lib/utils';
+import { cn, fetchJson } from './lib/utils';
 
 import { DeploymentPage } from './features/deployment/DeploymentPage';
 import { JobsPage } from './features/jobs/JobsPage';
@@ -142,7 +142,7 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
-      const response = await fetch('/api/auth/login', {
+      const { data } = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -152,11 +152,6 @@ const LoginPage = () => {
           platform
         })
       });
-      if (response.status >= 500) {
-        setError(`服务器错误 (${response.status})，请稍后重试`);
-        return;
-      }
-      const data = await response.json();
       if (data.ok) {
         setToken(data.token);
         setTarget({ host, platform, username, password });
@@ -165,7 +160,7 @@ const LoginPage = () => {
         setError(data.error || '登录失败');
       }
     } catch (err) {
-      setError('连接服务器失败');
+      setError(err.message || '连接服务器失败');
     } finally {
       setLoading(false);
     }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { useAuthStore } from './useAuthStore';
+import { fetchJson } from '../lib/utils';
 
 const STORAGE_KEY = 'nexus_config';
 
@@ -113,7 +114,7 @@ export const useAppStore = create((set, get) => ({
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       
-      const response = await fetch('/api/targets/discover', {
+      const { response, data } = await fetchJson('/api/targets/discover', {
         method: 'POST',
         headers,
         body: JSON.stringify({ target })
@@ -125,7 +126,6 @@ export const useAppStore = create((set, get) => ({
           return;
         }
 
-      const data = await response.json();
       if (response.ok) {
         set({ inventory: data.inventory });
       }
@@ -137,7 +137,7 @@ export const useAppStore = create((set, get) => ({
   refreshJobs: async (token) => {
     try {
       const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-      const response = await fetch('/api/jobs', { headers });
+      const { response, data } = await fetchJson('/api/jobs', { headers });
       
       if (response.status === 401) {
           useAuthStore.getState().logout();
@@ -146,7 +146,6 @@ export const useAppStore = create((set, get) => ({
         }
 
       if (response.ok) {
-        const data = await response.json();
         set({ jobs: data.jobs || [] });
         if (!get().activeJobId && data.jobs?.[0]) {
           set({ activeJobId: data.jobs[0].id });
@@ -164,13 +163,12 @@ export const useAppStore = create((set, get) => ({
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       
-      const response = await fetch('/api/targets/discover', {
+      const { response, data } = await fetchJson('/api/targets/discover', {
         method: 'POST',
         headers,
         body: JSON.stringify({ target })
       });
       
-      const data = await response.json();
       if (response.ok) {
         set({ inventory: data.inventory });
         return { ok: true, message: data.message };

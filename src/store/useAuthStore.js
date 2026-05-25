@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { fetchJson } from '../lib/utils';
 
 const tokenKey = 'nexus_token';
 
@@ -29,12 +30,11 @@ export const useAuthStore = create((set) => ({
         return;
       }
       
-      const sessionResponse = await fetch('/api/auth/session', {
+      const { response, data: sessionData } = await fetchJson('/api/auth/session', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
-      if (sessionResponse.ok) {
-        const sessionData = await sessionResponse.json();
+      if (response.ok) {
         set({ isAuthenticated: true, isInitialized: true });
         if (onSessionHydrated) onSessionHydrated(sessionData);
       } else {

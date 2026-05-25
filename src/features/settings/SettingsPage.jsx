@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { cn } from '../../lib/utils';
+import { cn, fetchJson } from '../../lib/utils';
 import { 
   Settings, 
   Server, 
@@ -39,9 +39,8 @@ export const SettingsPage = () => {
     // Fetch real-time health/system info from backend
     const fetchHealth = async () => {
       try {
-        const response = await fetch('/api/health');
+        const { response, data } = await fetchJson('/api/health');
         if (response.ok) {
-          const data = await response.json();
           setSystemSettings({
             ovftoolPath: data.ovftoolPath,
             ovftoolAvailable: data.ovftoolAvailable
