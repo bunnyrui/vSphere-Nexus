@@ -12,32 +12,31 @@
 
 | 类别 | 数量 |
 |---|---|
-| ✅ 已修复 | 46 |
+| ✅ 已修复 | 48 |
 | 🔧 部分修复 | 6 |
 | 📐 设计决策（不修） | 2 |
-| ⏳ 待处理 | 72 |
+| ⏳ 待处理 | 70 |
 | **合计** | **120** |
 
 ### 待处理按严重度
 
 | 严重度 | 数量 |
 |---|---|
-| 🔴 高 | 13 |
-| 🟡 中 | 43 |
+| 🔴 高 | 12 |
+| 🟡 中 | 42 |
 | 🟢 低 | 16 |
 
 ---
 
 ## 待处理
 
-### 🔴 高优先级（13）
+### 🔴 高优先级（12）
 
 #### 安全
 
 | # | 问题 | 文件 |
 |---|---|---|
 | BE-SEC-2 | WebSocket 代理服务端请求伪造 — `host`/`port` 来自 URL 参数，无超时，可做慢速拒绝服务攻击 | `server/index.js` |
-| BE-SEC-4 | 凭证滥用 — `hydrateTargetFromSession` 允许请求中的 `host` 覆盖会话中的 `host`，可用缓存密码攻击其他主机 | `server/index.js` |
 | BE-SEC-5 | 命令行参数注入 — 用户控制的值直接拼接为 ovftool 参数（`shell:false` 已阻断 shell 注入，但 ovftool 级别的参数注入仍有可能） | `server/ovftool.js` |
 | BE-SEC-6 | 凭证暴露在进程命令行（`ps aux` 可见 ovftool 密码） | `server/ovftool.js` |
 | BE-SEC-7 | 密码在部分 API 请求中冗余明文传输（`hydrateTargetFromSession` 已从 session 填充密码，前端传输是多余的） | `useAppStore.js`、`App.jsx` |
@@ -62,7 +61,7 @@
 
 ---
 
-### 🟡 中优先级（43 = 37 ⏳ + 6 🔧）
+### 🟡 中优先级（42 = 36 ⏳ + 6 🔧）
 
 #### 前端 — 资源管理
 
@@ -82,7 +81,6 @@
 |---|---|---|---|
 | DP-3 | 第 1→2 步不校验计算资源是否已选（只校验模板和存储） | `DeploymentPage.jsx:345` | ⏳ |
 | DP-4 | 命名预览数量为 2/3 时末尾重复（条件 `count > 1` 应为 `count > 3`） | `DeploymentPage.jsx:87` | ⏳ |
-| DP-5 | 自动推进 `effect` 使库存存在时自动跳离第 0 步，用户无法停留在第 0 步修改凭据（UX 设计问题） | `DeploymentPage.jsx:164-168` | ⏳ |
 
 #### 前端 — 任务监控
 
@@ -212,6 +210,8 @@
 | J-1 | 🔴 | 删除全部任务后 `activeJob` 为 `undefined` | `jobs.length === 0` 早返回保护 |
 | BE-SEC-1 | 🔴 | WebSocket 代理认证绕过 — `token` 参数未调用 `isValidToken()` | upgrade 时调用 `isValidToken()` 验证 token |
 | BE-SEC-3 | 🔴 | WebSocket 代理 CRLF 注入 — `ticket`/`targetHost` 未校验换行符 | 添加 `\r\n` 正则检测，含换行符的参数直接拒绝 |
+| BE-SEC-4 | 🔴 | 凭证滥用 — `hydrateTargetFromSession` 允许请求中的 `host` 覆盖会话中的 `host` | 锁定 host/username/password 为 session 值 |
+| DP-5 | 🟡 | 自动推进 effect 使库存存在时自动跳离第 0 步 | 移除整个连接步骤，4步精简为3步 |
 | BE-SEC-16 | 🔴 | 加密密钥竞态条件 | `8da404a` |
 | BE-SEC-18 | 🔴 | 虚拟机 ID 未转义直接拼入 XML | `92481fb` |
 | BE-SEC-19 | 🔴 | CDN 资源无 SRI 校验 | `4bcb29d→3efd7c5` |
@@ -334,10 +334,10 @@ jQuery 3.7.1 → jQuery UI 1.13.2 → wmks.min.js
 
 ## 优先级路线图
 
-1. **🔴 安全（7 项）**：BE-SEC-2~8（WebSocket SSRF/凭证暴露）、BE-SEC-17（TLS 全局禁用）
+1. **🔴 安全（6 项）**：BE-SEC-2/5~8（WebSocket SSRF/凭证暴露）、BE-SEC-17（TLS 全局禁用）
 2. **🔴 健壮性（1 项）**：BE-ROB-1（正则解析 XML）
 3. **🔴 基础设施（5 项）**：INF-1~5（测试、Lint、CI/CD、二进制管理、TypeScript）
-4. **🟡 前端功能缺陷（13 项）**：I-2~9（资源管理）、DP-3~5（部署向导）、J-2/4/5（任务监控）、C-1~4（控制台）、SP-1（快照）
+4. **🟡 前端功能缺陷（12 项）**：I-2~9（资源管理）、DP-3~4（部署向导）、J-2/4/5（任务监控）、C-1~4（控制台）、SP-1（快照）
 5. **🟡 后端中优先级（17 项）**：BE-SEC-9~13（安全加固）、BE-ROB-3~6/8~10/15（健壮性）、BE-PERF-1~3/4/6/8（性能）、ARC-1~4（架构）
 6. **🟢 低优先级（16 项）**：体验优化、无障碍访问、代码规范
 7. **长期**：测试框架、CI/CD、TypeScript 迁移
