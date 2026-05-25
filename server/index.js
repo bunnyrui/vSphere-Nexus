@@ -210,7 +210,9 @@ function hydrateTargetFromSession(req) {
     req.body.target = { 
       ...session.target, 
       ...(req.body.target || {}),
-      password: req.body.target?.password || session.target.password 
+      host: session.target.host,
+      username: session.target.username,
+      password: session.target.password
     };
   }
 }
