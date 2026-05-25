@@ -52,6 +52,12 @@ server.on("upgrade", (request, socket, head) => {
     return;
   }
 
+  if (/[\r\n]/.test(ticket) || /[\r\n]/.test(targetHost)) {
+    console.error("[UPGRADE] CRLF injection detected");
+    socket.destroy();
+    return;
+  }
+
   const session = token ? sessions.get(token) : null;
   const vCenterHost = session?.target?.host;
 
