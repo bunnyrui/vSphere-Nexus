@@ -4,7 +4,6 @@ import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { cn, fetchJson } from '../../lib/utils';
 import { 
-  Server, 
   Database, 
   Network, 
   Layers, 
@@ -19,7 +18,6 @@ import {
   Rocket
 } from 'lucide-react';
 
-// Sub-components will be extracted as they grow
 const StepIndicator = ({ currentStep, steps }) => (
   <div className="flex items-center justify-between mb-8">
     {steps.map((step, idx) => (
@@ -49,17 +47,15 @@ const StepIndicator = ({ currentStep, steps }) => (
 );
 
 export const DeploymentPage = () => {
-  const { target, setTarget, inventory, isProbing, discoverTarget, deploymentConfig, setDeploymentConfig, refreshJobs, setActiveJobId } = useAppStore();
+  const { target, setTarget, inventory, deploymentConfig, setDeploymentConfig, refreshJobs, setActiveJobId } = useAppStore();
   const token = useAuthStore(state => state.token);
   const navigate = useNavigate();
   
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [probeResult, setProbeResult] = useState(null);
 
   const steps = [
-    { id: 'connect', title: '连接 vSphere', icon: Server },
     { id: 'source', title: '部署源', icon: Copy },
     { id: 'config', title: 'VM 配置', icon: Settings2 },
     { id: 'confirm', title: '确认部署', icon: Play },
@@ -71,12 +67,10 @@ export const DeploymentPage = () => {
   const generatePreview = () => {
     const { prefix, start, count } = deploymentConfig.naming;
     
-    // Case 1: Empty start number -> single VM with just prefix
     if (!start) {
       return prefix || '(请输入名称)';
     }
 
-    // Case 2: Standard numbering
     const startNum = parseInt(start, 10) || 0;
     const padding = start.length;
     const names = [];
@@ -157,114 +151,16 @@ export const DeploymentPage = () => {
     setDeploymentConfig({ networkMappings: current });
   };
 
-  const onProbe = async () => {
-    setError('');
-    const result = await discoverTarget(token);
-    setProbeResult(result);
-    if (result.ok) {
-      setTimeout(() => handleNext(), 1000);
-    } else {
-      setError(result.message);
-    }
-  };
-
-  // Auto-advance if already connected via login
-  React.useEffect(() => {
-    if (inventory && currentStep === 0) {
-      setCurrentStep(1);
-    }
-  }, [inventory, currentStep]);
-
   return (
     <div className="max-w-4xl mx-auto">
       <div className="bg-card rounded-xl border shadow-sm p-8">
         <StepIndicator currentStep={currentStep} steps={steps} />
 
         <div className="mt-12 min-h-[400px]">
-          {/* Step 1: Connection */}
+          {/* Step 1: Source & Target Resources */}
           {currentStep === 0 && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-bold">连接您的 vSphere 环境</h2>
-                <p className="text-muted-foreground">填写地址和凭据以获取资源清单</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">平台类型</label>
-                  <select 
-                    value={target.platform} 
-                    onChange={e => setTarget({ platform: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-primary/20 outline-none"
-                  >
-                    <option value="vcenter">vCenter Server</option>
-                    <option value="esxi">ESXi Host</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">地址 (Host / IP)</label>
-                  <input 
-                    type="text"
-                    value={target.host}
-                    onChange={e => setTarget({ host: e.target.value })}
-                    placeholder="10.0.0.10"
-                    className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-primary/20 outline-none"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">用户名</label>
-                  <input 
-                    type="text"
-                    value={target.username}
-                    onChange={e => setTarget({ username: e.target.value })}
-                    placeholder="administrator@vsphere.local"
-                    className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-primary/20 outline-none"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">密码</label>
-                  <input 
-                    type="password"
-                    value={target.password}
-                    onChange={e => setTarget({ password: e.target.value })}
-                    placeholder="••••••••"
-                    className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-primary/20 outline-none"
-                  />
-                </div>
-              </div>
-
-              {error && (
-                <div className="bg-destructive/10 text-destructive p-4 rounded-lg flex gap-3 items-center">
-                  <AlertCircle size={20} />
-                  <p className="text-sm font-medium">{error}</p>
-                </div>
-              )}
-
-              {probeResult?.ok && (
-                <div className="bg-green-500/10 text-green-600 p-4 rounded-lg flex gap-3 items-center">
-                  <CheckCircle2 size={20} />
-                  <p className="text-sm font-medium">{probeResult.message}</p>
-                </div>
-              )}
-
-              <div className="pt-6 flex justify-end">
-                <button 
-                  onClick={onProbe}
-                  disabled={isProbing || !target.host || !target.username}
-                  className="bg-primary text-primary-foreground px-6 py-2 rounded-md font-medium hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center gap-2"
-                >
-                  {isProbing ? '正在连接...' : '测试并继续'}
-                  {!isProbing && <ChevronRight size={18} />}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 2: Source & Target Resources */}
-          {currentStep === 1 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {/* Deployment Source */}
                 <div className="space-y-4">
                   <h3 className="font-semibold flex items-center gap-2">
                     <Copy size={18} className="text-primary" /> 部署源
@@ -287,7 +183,6 @@ export const DeploymentPage = () => {
                   </div>
                 </div>
 
-                {/* Target Resources */}
                 <div className="space-y-4">
                   <h3 className="font-semibold flex items-center gap-2">
                     <HardDrive size={18} className="text-primary" /> 目标资源
@@ -341,13 +236,7 @@ export const DeploymentPage = () => {
                 </div>
               </div>
 
-              <div className="pt-12 flex justify-between">
-                <button 
-                  onClick={handleBack}
-                  className="px-6 py-2 rounded-md font-medium text-muted-foreground hover:bg-secondary transition-all flex items-center gap-2"
-                >
-                  <ChevronLeft size={18} /> 上一步
-                </button>
+              <div className="pt-12 flex justify-end">
                 <button 
                   onClick={handleNext}
                   disabled={!target.sourceInventoryPath || !target.datastore}
@@ -359,8 +248,8 @@ export const DeploymentPage = () => {
             </div>
           )}
 
-          {/* Step 3: VM Config */}
-          {currentStep === 2 && (
+          {/* Step 2: VM Config */}
+          {currentStep === 1 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-4">
                 {(() => {
                   const sourceNetworks = inventory?.inventoryItems?.find(i => i.inventoryPath === target.sourceInventoryPath)?.sourceNetworks ?? ['VM Network'];
@@ -501,11 +390,10 @@ export const DeploymentPage = () => {
             </div>
           )}
 
-          {/* Step 4: Confirmation */}
-          {currentStep === 3 && (
+          {/* Step 3: Confirmation */}
+          {currentStep === 2 && (
             <div className="space-y-8 animate-in fade-in zoom-in-95">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-                {/* Left Card: Summary */}
                 <div className="md:col-span-1 bg-primary/5 border border-primary/20 rounded-xl p-6 space-y-6 flex flex-col">
                   <h3 className="text-lg font-bold flex items-center gap-2 text-primary pb-2 border-b border-primary/10">
                     <CheckCircle2 size={20} /> 部署策略
@@ -558,7 +446,6 @@ export const DeploymentPage = () => {
                   </div>
                 </div>
 
-                {/* Right Card: Detailed Manifest */}
                 <div className="md:col-span-2 bg-primary/5 border border-primary/20 rounded-xl p-6 flex flex-col">
                   <div className="flex justify-between items-center pb-2 border-b border-primary/10 mb-4">
                     <h3 className="text-lg font-bold flex items-center gap-2 text-primary">
