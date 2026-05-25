@@ -28,7 +28,8 @@ import {
   Edit3,
   Settings,
   X,
-  CheckCircle2
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 
 const PowerStatus = ({ state }) => {
@@ -1033,14 +1034,6 @@ export const InventoryPage = () => {
               <button onClick={() => setVmToReconfigure(null)} className="p-1 hover:bg-muted rounded-full"><X size={20} /></button>
             </div>
             <div className="p-6 space-y-6">
-              {vmToReconfigure.powerState === 'poweredOn' && (
-                <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex gap-3 text-amber-700">
-                  <AlertCircle size={18} className="shrink-0" />
-                  <p className="text-[10px] leading-relaxed font-medium">
-                    该虚拟机正在运行中。vSphere 不支持在开机状态下热修改 CPU 和内存。请先关闭虚拟机后再尝试应用配置。
-                  </p>
-                </div>
-              )}
               <div className="space-y-3">
                 <label className="text-[10px] font-bold uppercase text-muted-foreground ml-1 flex justify-between">
                   <span>CPU 核心数</span>
