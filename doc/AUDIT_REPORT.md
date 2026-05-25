@@ -1,7 +1,7 @@
 # vSphere Nexus 审计报告
 
 **版本：** v1.0.1-beta.1
-**更新：** 2026-05-26
+**更新：** 2026-05-26（源码逐条验证）
 **范围：** 前端 13 文件（约 3,100 行）、后端 5 文件（约 2,030 行）、配置文件
 
 > 约定：🔴 高  🟡 中  🟢 低  |  ✅ 已修复  ⏳ 待处理  🔧 部分修复  📐 设计决策
@@ -12,19 +12,19 @@
 
 | 类别 | 数量 |
 |---|---|
-| ✅ 已修复 | 43 |
+| ✅ 已修复 | 44 |
 | 🔧 部分修复 | 6 |
-| 📐 设计决策（不修） | 1 |
-| ⏳ 待处理 | 88 |
-| **合计** | **138** |
+| 📐 设计决策（不修） | 2 |
+| ⏳ 待处理 | 74 |
+| **合计** | **120** |
 
 ### 待处理按严重度
 
 | 严重度 | 数量 |
 |---|---|
 | 🔴 高 | 15 |
-| 🟡 中 | 47 |
-| 🟢 低 | 26 |
+| 🟡 中 | 43 |
+| 🟢 低 | 16 |
 
 ---
 
@@ -40,11 +40,11 @@
 | BE-SEC-2 | WebSocket 代理服务端请求伪造 — `host`/`port` 来自 URL 参数，无超时，可做慢速拒绝服务攻击 | `server/index.js` |
 | BE-SEC-3 | WebSocket 代理 CRLF 注入 — `ticket`/`targetHost` 未校验换行符 | `server/index.js` |
 | BE-SEC-4 | 凭证滥用 — `hydrateTargetFromSession` 允许请求中的 `host` 覆盖会话中的 `host`，可用缓存密码攻击其他主机 | `server/index.js` |
-| BE-SEC-5 | 命令行参数注入 — 用户控制的值直接拼接为 ovftool 参数 | `server/ovftool.js` |
+| BE-SEC-5 | 命令行参数注入 — 用户控制的值直接拼接为 ovftool 参数（`shell:false` 已阻断 shell 注入，但 ovftool 级别的参数注入仍有可能） | `server/ovftool.js` |
 | BE-SEC-6 | 凭证暴露在进程命令行（`ps aux` 可见 ovftool 密码） | `server/ovftool.js` |
-| BE-SEC-7 | 密码随每次 API 请求明文传输 | `useAppStore.js`、`App.jsx` |
-| BE-SEC-8 | 凭证明文驻留内存（`jobs.js` 中 `payloads` Map） | `server/jobs.js` |
-| BE-SEC-17 | TLS 证书验证全局禁用（模块级 `insecureAgent`） | `server/services/vimClient.js` |
+| BE-SEC-7 | 密码在部分 API 请求中冗余明文传输（`hydrateTargetFromSession` 已从 session 填充密码，前端传输是多余的） | `useAppStore.js`、`App.jsx` |
+| BE-SEC-8 | 凭证明文驻留内存（`jobs.js` 中 `payloads` Map — 磁盘已加密，内存仍为明文） | `server/jobs.js` |
+| BE-SEC-17 | TLS 证书验证全局禁用（`vimClient.js` 模块级 `insecureAgent` + WebSocket 代理 `rejectUnauthorized: false`） | `server/services/vimClient.js` |
 
 #### 健壮性
 
@@ -64,7 +64,7 @@
 
 ---
 
-### 🟡 中优先级（47 + 6 部分修复）
+### 🟡 中优先级（43 = 37 ⏳ + 6 🔧）
 
 #### 前端 — 资源管理
 
@@ -72,9 +72,9 @@
 |---|---|---|---|
 | I-2 | 全选复选框跨页选中 — `toggleSelectAll` 对全部过滤结果操作，而非当前页 | `InventoryPage.jsx:233-239` | ⏳ |
 | I-3 | 搜索/筛选变更后 `selectedVms` 未清空，已选但不可见的虚拟机仍被批量操作影响 | `InventoryPage.jsx:155-157` | ⏳ |
-| I-4 | CSV 导出公式注入防护转义格式有误（单引号开头但双引号结尾，引号不匹配） | `InventoryPage.jsx` | 🔧 |
-| I-5 | 单文件 1,100 行，需按功能拆分为子组件 | `InventoryPage.jsx` | ⏳ |
-| I-7 | 排序中 `undefined` 比较不稳定 | `InventoryPage.jsx` | ⏳ |
+| I-4 | CSV 导出公式注入防护 — 危险值仅加单引号前缀但未用双引号包裹，含逗号的值（如 `=SUM(1,2)`）会导致 CSV 格式损坏 | `InventoryPage.jsx` | 🔧 |
+| I-5 | 单文件 1,088 行，内联模态框可提取为子组件（代码组织建议） | `InventoryPage.jsx` | ⏳ |
+| I-7 | 排序中 `undefined` 值未归一化，含 undefined 的条目排序行为不可预测 | `InventoryPage.jsx` | ⏳ |
 | I-8 | `configForm`/`setConfigSpec` 命名不匹配 | `InventoryPage.jsx` | ⏳ |
 | I-9 | 全项目使用 `alert()`/`confirm()`，不可定制且阻塞线程 | 多文件 | ⏳ |
 
@@ -84,25 +84,21 @@
 |---|---|---|---|
 | DP-3 | 第 1→2 步不校验计算资源是否已选（只校验模板和存储） | `DeploymentPage.jsx:345` | ⏳ |
 | DP-4 | 命名预览数量为 2/3 时末尾重复（条件 `count > 1` 应为 `count > 3`） | `DeploymentPage.jsx:87` | ⏳ |
-| DP-5 | 自动推进 `effect` 使库存存在时自动跳离第 0 步，用户无法停留在第 0 步修改凭据 | `DeploymentPage.jsx:164-168` | ⏳ |
-| DP-6 | 空前缀 + 空起始编号生成空字符串虚拟机名称 | `DeploymentPage.jsx:97-99` | ⏳ |
-| DP-7 | 网络映射空目标值未被拦截，可提交 `{ source, target: "" }` | `DeploymentPage.jsx:141-150` | ⏳ |
+| DP-5 | 自动推进 `effect` 使库存存在时自动跳离第 0 步，用户无法停留在第 0 步修改凭据（UX 设计问题） | `DeploymentPage.jsx:164-168` | ⏳ |
 
 #### 前端 — 任务监控
 
 | # | 问题 | 文件 | 状态 |
 |---|---|---|---|
 | J-2 | `handleDelete` 中 `refreshJobs` 未 `await`，删除后短暂显示残留数据 | `JobsPage.jsx:166-170` | ⏳ |
-| J-3 | 日志去重键 `timestamp:message` 过于激进，批量操作相同日志被吞掉 | `JobsPage.jsx:78-80` | ⏳ |
-| J-4 | 日志数组无限增长无虚拟化，长时间部署导致 DOM 性能劣化 | `JobsPage.jsx:81,312-324` | ⏳ |
-| J-5 | `Token` 通过 URL 查询参数传递给 SSE，泄露到日志和 `Referer` 头 | `JobsPage.jsx:71` | ⏳ |
+| J-4 | 日志数组无虚拟化渲染（服务端已限 1,000 条，客户端可加裁剪窗口但非必要） | `JobsPage.jsx:81,312-324` | ⏳ |
+| J-5 | `Token` 通过 URL 查询参数传递给 SSE（SSE 技术限制），泄露到日志和 `Referer` 头 | `JobsPage.jsx:71` | ⏳ |
 
 #### 前端 — 仪表盘
 
 | # | 问题 | 文件 |
 |---|---|---|
-| D-1 | StatCard 图标背景使用无效 Tailwind 类名（`text-opacity-*` 在 v3 中已弃用），显示为实色块 | `App.jsx` |
-| D-2 | Dashboard 代码应在 `App.jsx` 中拆分到独立模块 | `App.jsx` |
+| D-1 | StatCard 图标背景 `colorClass.replace('text-', 'text-opacity-20 bg-')` 生成无效的 `text-opacity-20` 类且与静态 `bg-secondary` 冲突 | `App.jsx` |
 
 #### 前端 — 登录
 
@@ -116,18 +112,15 @@
 |---|---|---|---|
 | C-1 | 模态框缺少焦点陷阱、`Escape` 键关闭、ARIA 属性 | `VMConsole.jsx` | ⏳ |
 | C-2 | 错误重试用 `window.location.reload()` 丢失全部状态 | `VMConsole.jsx` | ⏳ |
-| C-3 | 依赖全局 `window.WMKS`，无类型安全 | `VMConsole.jsx` | ⏳ |
-| C-4 | WMKS 初始化 `setTimeout` 未清理 | `VMConsole.jsx` | ⏳ |
+| C-3 | 依赖全局 `window.WMKS`，无类型安全（已知技术约束） | `VMConsole.jsx` | ⏳ |
+| C-4 | WMKS 初始化 `setTimeout` 未清理，组件 200ms 内卸载时回调仍执行 | `VMConsole.jsx` | ⏳ |
 | SP-1 | 侧滑面板缺少焦点陷阱和 `Escape` 键关闭 | `SnapshotPanel.jsx` | ⏳ |
-| ST-1 | 401 后 `logout()` 不刷新页面 | `useAppStore.js` | ✅ `00d316c` |
-
-> **注：** ST-1 已修复，但归入本节以保持状态管理相关问题的完整性。
 
 #### 后端 — 安全
 
 | # | 问题 | 文件 | 状态 |
 |---|---|---|---|
-| BE-SEC-9 | 限流仅基于 IP 地址 | `server/index.js` | ⏳ |
+| BE-SEC-9 | 限流仅基于 IP 地址（业界标准做法，可加用户名维度增强） | `server/index.js` | ⏳ |
 | BE-SEC-10 | 会话 Map 无上限（内存溢出风险） | `server/index.js` | ⏳ |
 | BE-SEC-11 | `/api/health` 返回服务器绝对路径 | `server/index.js` | ⏳ |
 | BE-SEC-12 | 未设置安全 HTTP 头（CSP、X-Frame-Options 等） | `server/index.js` | ⏳ |
@@ -141,7 +134,7 @@
 | BE-ROB-4 | `/api/vms/destroy` 未校验 `vmIds` 是否非空数组 | `server/index.js:386` | ⏳ |
 | BE-ROB-5 | `ensureSession()` 并发竞态 — 缓存过期时多请求同时重新登录 | `server/services/vmService.js:14-46` | ⏳ |
 | BE-ROB-6 | `saveToDisk` 非原子写入，崩溃会截断文件丢失全部任务数据 | `server/jobs.js` | ⏳ |
-| BE-ROB-8 | `encryptField`/`decryptField` 同步函数不保证密钥已加载 | `server/jobs.js` | 🔧 |
+| BE-ROB-8 | `encryptField`/`decryptField` 同步函数不保证密钥已加载（正常调用链已由 `initStore` await 缓解） | `server/jobs.js` | 🔧 |
 | BE-ROB-9 | SSE 心跳 `res.write` 无 `try/catch`，socket 错误可致未捕获异常 | `server/index.js` | 🔧 已加 `closed` 标志，但 `res.write` 仍无错误处理 |
 | BE-ROB-10 | API 响应格式不一致（`{ ok }` 与 `{ error }` 与 `{ errors }` 混用） | `server/index.js` | ⏳ |
 | BE-ROB-15 | `acquireWebMksTicket` 缺少 `ticket` 标签时返回 `undefined`（下游 `TypeError`） | `server/services/vmService.js` | 🔧 catch 块已重新抛出，但缺少 ticket 标签仍返回 undefined |
@@ -154,9 +147,8 @@
 | BE-PERF-2 | `validateTemplateSource` 每次创建新 `VmService` 实例 | `server/index.js` | ⏳ |
 | BE-PERF-3 | `/api/deployments/check` 调用了两次 `discoverInventory` | `server/index.js:310-312` | ⏳ |
 | BE-PERF-4 | `hydrateTargetFromSession` 直接修改 `req.body` | `server/index.js` | ⏳ |
-| BE-PERF-5 | 每次 `textTag` 调用都 `new RegExp` | `server/services/vimClient.js` | ⏳ |
 | BE-PERF-6 | `folderPathParts`/`findDatacenter` 重复创建 Map（每次 O(n)） | `server/services/vmService.js` | ⏳ |
-| BE-PERF-8 | `Layout.jsx` 订阅过多 store 状态 | `Layout.jsx` | ⏳ |
+| BE-PERF-8 | `Layout.jsx` 解构整个 store 导致不相关状态变化时也重新渲染 | `Layout.jsx` | ⏳ |
 
 #### 架构
 
@@ -169,58 +161,43 @@
 
 ---
 
-### 🟢 低优先级（26）
+### 🟢 低优先级（16）
 
 #### 前端
 
 | # | 问题 | 文件 |
 |---|---|---|
-| D-3 | 虚拟机过滤和字节转换逻辑重复出现 | `App.jsx` |
-| I-10 | CSV 导出仅导出当前筛选结果，按钮标签无提示 | `InventoryPage.jsx:207` |
+| D-3 | 虚拟机过滤和字节转换逻辑重复出现（可提取为 `utils.js` 工具函数） | `App.jsx` |
+| I-10 | CSV 导出按钮标签无提示，未说明导出范围 | `InventoryPage.jsx:207` |
 | I-11 | 表格复选框缺少 `aria-label` | `InventoryPage.jsx` |
 | DP-9 | 探测按钮不校验密码为空 | `DeploymentPage.jsx:245` |
 | DP-10 | 开关缺少 `role="switch"` 和 `aria-checked` | `DeploymentPage.jsx` |
 | J-8 | `React.useState` 和 `useState` 混用 | `JobsPage.jsx` |
 | C-5 | `wmks.min.js` 加载失败无提示 | `index.html` |
-| SP-2 | 硬编码 `bg-white`，暗色主题不兼容 | `SnapshotPanel.jsx` |
+| SP-2 | 硬编码 `bg-white`，暗色主题不兼容（应改为 `bg-card`） | `SnapshotPanel.jsx` |
 | S-1 | 暗色模式切换无即时视觉反馈，需点"保存更改"后才生效 | `SettingsPage.jsx:237,246` |
-| S-2 | 保存为纯 `localStorage` 操作，500 毫秒延迟是模拟的（误导性） | `SettingsPage.jsx:62-79` |
-| S-3 | 健康检查 `/api/health` 未携带认证 `token` | `SettingsPage.jsx:42` |
 | S-4 | 子组件在函数体内定义，每次渲染重建 | `SettingsPage.jsx` |
 
 #### 后端
 
 | # | 问题 | 文件 |
 |---|---|---|
-| BE-SEC-14 | ovftool 命令引用规则不完整 | `server/ovftool.js` |
-| BE-SEC-15 | Ticket 部分泄露到日志 | `server/index.js` |
-| BE-ROB-16 | catch-all 路由在非生产环境下返回 HTML | `server/index.js` |
-| BE-PERF-9 | `jobs.js` 日志截断使用 `splice`（大数组性能差） | `server/jobs.js` |
-| BE-PERF-10 | ovftool 缓存路径不可刷新 | `server/ovftool.js` |
-| BE-PERF-11 | ovftool URL 可能双重编码 | `server/ovftool.js` |
+| BE-SEC-15 | Ticket 部分泄露到日志（前 8-10 字符） | `server/index.js` |
+| BE-PERF-10 | ovftool 缓存路径不可刷新，运行时安装需重启 | `server/ovftool.js` |
 
 #### 架构
 
 | # | 问题 | 文件 |
 |---|---|---|
-| ARC-5 | `Layout.jsx` 路径映射应改为对象 | `Layout.jsx` |
-| ARC-6 | `textTag` 的 `tag` 参数未清理 | `server/services/vimClient.js` |
-| ARC-7 | `useAppStore.js` localStorage 键为魔法字符串 | `useAppStore.js` |
-| ARC-8 | `useAuthStore.setToken` 不验证 token 格式 | `useAuthStore.js` |
-| ARC-9 | `useAuthStore` 中 `token` 存在但 `isAuthenticated` 为 `false`（时序问题） | `useAuthStore.js` |
-| ARC-10 | `useAuthStore.logout()` 未调用 `resetStore()` | `useAuthStore.js` |
-| ARC-11 | `InventoryPage` 每次渲染生成当前时间（不更新） | `InventoryPage.jsx` |
+| ARC-10 | `useAuthStore.logout()` 未调用 `resetStore()`（`Layout.handleLogout` 已手动调用两者，但 `SettingsPage` 直接调 `logout()` 时 appStore 未清理） | `useAuthStore.js` |
+| ARC-11 | `InventoryPage` 每次渲染生成当前时间（应记录最近一次刷新时间戳） | `InventoryPage.jsx` |
 
 #### 基础设施
 
 | # | 问题 |
 |---|---|
-| INF-6 | Express 版本范围过宽（`^5.1.0`） |
-| INF-7 | `vite.config.js` 代理目标硬编码 |
-| INF-8 | `vite.config.js` 缺少生产构建优化 |
-| INF-9 | `start` 脚本 Windows 不兼容 |
-| INF-10 | 缺少 Prettier 配置 |
-| INF-12 | `package.json` 与 `package-lock.json` 版本号不一致 |
+| INF-7 | `vite.config.js` 代理目标硬编码（不跟随 `PORT` 环境变量） |
+| INF-9 | `start` 脚本 `NODE_ENV=production` 前缀 Windows 不兼容 |
 
 ---
 
@@ -232,6 +209,8 @@
 | I-1 | 🔴 | `AlertCircle` 使用但未导入，`ReferenceError` 崩溃 | 补充导入，移除不可达警告提示（入口已拦截） |
 | DP-1 | 🔴 | 部署数量无上限，大数冻结浏览器 | 前端软限制 + 后端 vms.length ≤ 100 |
 | DP-2 | 🔴 | 第 2→3 步无验证 | 前缀必填 + 网络映射必选，禁用下一步 |
+| DP-6 | 🟡 | 空前缀 + 空起始编号生成空字符串 VM 名称 | 被 DP-2 修复覆盖（前端禁用 + 提交校验 + 后端验证） |
+| DP-7 | 🟡 | 网络映射空目标值未被拦截 | 被 DP-2 修复覆盖（`hasUnmappedNetwork` 检测 + 禁用下一步） |
 | J-1 | 🔴 | 删除全部任务后 `activeJob` 为 `undefined` | `jobs.length === 0` 早返回保护 |
 | BE-SEC-16 | 🔴 | 加密密钥竞态条件 | `8da404a` |
 | BE-SEC-18 | 🔴 | 虚拟机 ID 未转义直接拼入 XML | `92481fb` |
@@ -273,11 +252,12 @@
 
 ---
 
-## 设计决策（1）
+## 设计决策（2）
 
 | # | 原严重度 | 问题 | 决策理由 |
 |---|---|---|---|
 | BE-ROB-2 | 🔴 | 任务无所有权校验 | 单用户工具，不需要多租户隔离 |
+| J-3 | 🟡 | 日志去重键 `at:message` 碰撞概率极低，对 SSE 重连去重有正面价值 | 理论问题非实际风险 |
 
 ---
 
@@ -357,7 +337,7 @@ jQuery 3.7.1 → jQuery UI 1.13.2 → wmks.min.js
 1. **🔴 安全（9 项）**：BE-SEC-1~8（WebSocket 请求伪造/注入/凭证暴露）、BE-SEC-17（TLS 全局禁用）
 2. **🔴 健壮性（1 项）**：BE-ROB-1（正则解析 XML）
 3. **🔴 基础设施（5 项）**：INF-1~5（测试、Lint、CI/CD、二进制管理、TypeScript）
-4. **🟡 前端功能缺陷（16 项）**：I-2~9（资源管理）、DP-3~7（部署向导）、J-2~5（任务监控）、C-1~4（控制台）、SP-1（快照）
-5. **🟡 后端中优先级（17 项）**：BE-SEC-9~13（安全加固）、BE-ROB-3~10/15（健壮性）、BE-PERF-1~6/8（性能）、ARC-1~4（架构）
-6. **🟢 低优先级（26 项）**：体验优化、无障碍访问、代码规范
+4. **🟡 前端功能缺陷（13 项）**：I-2~9（资源管理）、DP-3~5（部署向导）、J-2/4/5（任务监控）、C-1~4（控制台）、SP-1（快照）
+5. **🟡 后端中优先级（17 项）**：BE-SEC-9~13（安全加固）、BE-ROB-3~6/8~10/15（健壮性）、BE-PERF-1~3/4/6/8（性能）、ARC-1~4（架构）
+6. **🟢 低优先级（16 项）**：体验优化、无障碍访问、代码规范
 7. **长期**：测试框架、CI/CD、TypeScript 迁移
