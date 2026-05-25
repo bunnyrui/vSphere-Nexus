@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { cn } from '../../lib/utils';
+import { cn, fetchJson } from '../../lib/utils';
 import { 
   Server, 
   Database, 
@@ -113,7 +113,7 @@ export const DeploymentPage = () => {
         dryRun: false
       };
 
-      const response = await fetch('/api/deployments', {
+      const { response, data } = await fetchJson('/api/deployments', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -122,7 +122,6 @@ export const DeploymentPage = () => {
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
       if (response.ok) {
         setActiveJobId(data.job.id);
         await refreshJobs(token);

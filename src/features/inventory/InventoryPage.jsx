@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { cn } from '../../lib/utils';
+import { cn, fetchJson } from '../../lib/utils';
 import { SnapshotPanel } from './SnapshotPanel';
 import { VMConsole } from '../../components/console/VMConsole';
 import { 
@@ -248,7 +248,7 @@ export const InventoryPage = () => {
     setProcessing(true);
     try {
       let endpoint = `/api/vms/${vm.id}/${action}`;
-      const response = await fetch(endpoint, {
+      const { response, data: result } = await fetchJson(endpoint, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -257,11 +257,9 @@ export const InventoryPage = () => {
         body: JSON.stringify(data)
       });
 
-      const result = await response.json();
       if (response.ok) {
         setVmToRename(null);
         setVmToReconfigure(null);
-        // Inventory will refresh via heartbeat or we can trigger it
         await refreshInventory(token);
       } else {
         alert(result.error || '操作失败');
@@ -329,7 +327,7 @@ export const InventoryPage = () => {
 
     setProcessing(true);
     try {
-      const response = await fetch(endpoint, {
+      const { response, data } = await fetchJson(endpoint, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -338,12 +336,9 @@ export const InventoryPage = () => {
         body: JSON.stringify(body)
       });
 
-      const data = await response.json();
       if (response.ok) {
         setActiveJobId(data.job.id);
         await refreshJobs(token);
-        // Removed navigate('/jobs') to stay on the current page
-        // The background heartbeat will update the UI within 5 seconds
       } else {
         alert(data.errors?.join(', ') || '操作失败');
       }

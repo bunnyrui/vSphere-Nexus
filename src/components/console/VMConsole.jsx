@@ -9,7 +9,7 @@ import {
   MousePointer2,
   AlertCircle
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, fetchJson } from '../../lib/utils';
 import { useAuthStore } from '../../store/useAuthStore';
 
 export const VMConsole = ({ vm, onClose }) => {
@@ -48,7 +48,7 @@ export const VMConsole = ({ vm, onClose }) => {
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       try {
-        const response = await fetch(`/api/vms/${vm.id}/ticket`, {
+        const { response, data: ticketData } = await fetchJson(`/api/vms/${vm.id}/ticket`, {
           method: 'POST',
           signal: controller.signal,
           headers: { 
@@ -61,10 +61,8 @@ export const VMConsole = ({ vm, onClose }) => {
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || '无法获取控制台票据');
+          throw new Error(ticketData.error || '无法获取控制台票据');
         }
-        const ticketData = await response.json();
 
         if (!isMounted) return;
 

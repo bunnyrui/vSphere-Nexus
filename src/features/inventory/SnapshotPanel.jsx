@@ -13,7 +13,7 @@ import {
   Cpu,
   Save
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, fetchJson } from '../../lib/utils';
 import { useAuthStore } from '../../store/useAuthStore';
 
 export const SnapshotPanel = ({ vm, onClose }) => {
@@ -31,17 +31,16 @@ export const SnapshotPanel = ({ vm, onClose }) => {
   const fetchSnapshots = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/vms/${vm.id}/snapshots`, {
+      const { response, data } = await fetchJson(`/api/vms/${vm.id}/snapshots`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const data = await response.json();
       if (response.ok) {
         setSnapshots(data.snapshots || []);
       } else {
         setError(data.error || '获取快照失败');
       }
     } catch (err) {
-      setError('连接服务器失败');
+      setError(err.message || '连接服务器失败');
     } finally {
       setLoading(false);
     }
@@ -56,7 +55,7 @@ export const SnapshotPanel = ({ vm, onClose }) => {
     if (!newName) return;
     setSubmitting(true);
     try {
-      const response = await fetch(`/api/vms/${vm.id}/snapshots`, {
+      const { response, data } = await fetchJson(`/api/vms/${vm.id}/snapshots`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -68,11 +67,10 @@ export const SnapshotPanel = ({ vm, onClose }) => {
         setNewName(`Snapshot-${new Date().toLocaleDateString()}`);
         await fetchSnapshots();
       } else {
-        const data = await response.json();
         alert(data.error || '创建快照失败');
       }
     } catch (err) {
-      alert('连接失败');
+      alert(err.message || '连接失败');
     } finally {
       setSubmitting(false);
     }
@@ -82,18 +80,17 @@ export const SnapshotPanel = ({ vm, onClose }) => {
     if (!window.confirm(`确定要将虚拟机恢复到快照 "${sname}" 吗？当前未保存的状态将丢失。`)) return;
     setSubmitting(true);
     try {
-      const response = await fetch(`/api/snapshots/${sid}/revert`, {
+      const { response, data } = await fetchJson(`/api/snapshots/${sid}/revert`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         alert('快照回滚指令已发出');
       } else {
-        const data = await response.json();
         alert(data.error || '回滚失败');
       }
     } catch (err) {
-      alert('连接失败');
+      alert(err.message || '连接失败');
     } finally {
       setSubmitting(false);
     }
@@ -103,18 +100,17 @@ export const SnapshotPanel = ({ vm, onClose }) => {
     if (!window.confirm(`确定要彻底删除快照 "${sname}" 吗？此操作将整合磁盘数据，无法恢复。`)) return;
     setSubmitting(true);
     try {
-      const response = await fetch(`/api/snapshots/${sid}`, {
+      const { response, data } = await fetchJson(`/api/snapshots/${sid}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         await fetchSnapshots();
       } else {
-        const data = await response.json();
         alert(data.error || '删除失败');
       }
     } catch (err) {
-      alert('连接失败');
+      alert(err.message || '连接失败');
     } finally {
       setSubmitting(false);
     }

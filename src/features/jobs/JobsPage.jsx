@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { cn } from '../../lib/utils';
+import { cn, fetchJson } from '../../lib/utils';
 import { 
   Activity, 
   CheckCircle2, 
@@ -120,7 +120,7 @@ export const JobsPage = () => {
     if (!window.confirm('确定要取消当前正在运行的任务吗？')) return;
 
     try {
-      const response = await fetch(`/api/jobs/${activeJob.id}/cancel`, {
+      const { response } = await fetchJson(`/api/jobs/${activeJob.id}/cancel`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -130,7 +130,7 @@ export const JobsPage = () => {
         alert('取消任务失败');
       }
     } catch (err) {
-      alert('连接服务器失败');
+      alert(err.message || '连接服务器失败');
     }
   };
 
@@ -139,19 +139,18 @@ export const JobsPage = () => {
     if (!window.confirm('确定要重试失败的子任务吗？')) return;
 
     try {
-      const response = await fetch(`/api/jobs/${activeJob.id}/retry`, {
+      const { response, data } = await fetchJson(`/api/jobs/${activeJob.id}/retry`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
-        const data = await response.json();
         setActiveJobId(data.job.id);
         refreshJobs(token);
       } else {
         alert('重试任务失败');
       }
     } catch (err) {
-      alert('连接服务器失败');
+      alert(err.message || '连接服务器失败');
     }
   };
 
@@ -159,7 +158,7 @@ export const JobsPage = () => {
     if (!window.confirm('确定要永久删除此任务记录吗？')) return;
 
     try {
-      const response = await fetch(`/api/jobs/${id}`, {
+      const { response } = await fetchJson(`/api/jobs/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -172,7 +171,7 @@ export const JobsPage = () => {
         alert('删除失败');
       }
     } catch (err) {
-      alert('连接服务器失败');
+      alert(err.message || '连接服务器失败');
     }
   };
 
