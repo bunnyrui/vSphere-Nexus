@@ -46,6 +46,12 @@ server.on("upgrade", (request, socket, head) => {
     return;
   }
 
+  if (!isValidToken(token)) {
+    console.error("[UPGRADE] Invalid or expired token");
+    socket.destroy();
+    return;
+  }
+
   const session = token ? sessions.get(token) : null;
   const vCenterHost = session?.target?.host;
 
