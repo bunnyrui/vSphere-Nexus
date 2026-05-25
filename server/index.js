@@ -619,6 +619,7 @@ function validateDeployment(body) {
   if (!body?.sourceInventoryPath) errors.push("需要选择 vSphere 模板");
   errors.push(...validateTarget(normalizeTarget(body?.target ?? {})));
   if (!Array.isArray(body?.vms) || !body.vms.some((vm) => vm.name)) errors.push("至少需要一个 VM 名称");
+  if (Array.isArray(body?.vms) && body.vms.length > 100) errors.push("单次部署数量不能超过 100 台");
   return errors;
 }
 

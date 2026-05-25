@@ -101,6 +101,11 @@ export const DeploymentPage = () => {
 
   const handleStartDeployment = async () => {
     setError('');
+    const count = deploymentConfig.naming.count;
+    if (!count || count < 1 || count > 100) {
+      setError('部署数量必须在 1-100 之间');
+      return;
+    }
     setSubmitting(true);
     try {
       const vms = getEffectiveVms();
@@ -399,10 +404,16 @@ export const DeploymentPage = () => {
                   </div>
                 </div>
 
-                <div className="text-sm text-muted-foreground bg-primary/5 p-3 rounded border border-primary/10">
-                  <span className="font-medium text-primary">命名预览：</span>
-                  {generatePreview()}
-                </div>
+                {deploymentConfig.naming.start && deploymentConfig.naming.count > 100 ? (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-sm font-medium">
+                    单次部署数量不能超过 100 台（当前：{deploymentConfig.naming.count}）
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground bg-primary/5 p-3 rounded border border-primary/10">
+                    <span className="font-medium text-primary">命名预览：</span>
+                    {generatePreview()}
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 pt-2">
                   <label className="flex items-center gap-2 cursor-pointer group">
@@ -461,7 +472,8 @@ export const DeploymentPage = () => {
                 </button>
                 <button 
                   onClick={handleNext}
-                  className="bg-primary text-primary-foreground px-6 py-2 rounded-md font-medium hover:bg-primary/90 transition-all flex items-center gap-2"
+                  disabled={deploymentConfig.naming.count > 100 || deploymentConfig.naming.count < 1}
+                  className="bg-primary text-primary-foreground px-6 py-2 rounded-md font-medium hover:bg-primary/90 transition-all flex items-center gap-2 disabled:opacity-50"
                 >
                   下一步 <ChevronRight size={18} />
                 </button>
