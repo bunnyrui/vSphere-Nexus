@@ -152,6 +152,10 @@ const LoginPage = () => {
           platform
         })
       });
+      if (response.status >= 500) {
+        setError(`服务器错误 (${response.status})，请稍后重试`);
+        return;
+      }
       const data = await response.json();
       if (data.ok) {
         setToken(data.token);
