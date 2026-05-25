@@ -125,7 +125,7 @@ const Dashboard = () => {
 };
 
 const LoginPage = () => {
-  const { isAuthenticated, setToken, authEnabled } = useAuthStore();
+  const { isAuthenticated, setToken } = useAuthStore();
   const { target, setTarget, setInventory } = useAppStore();
   const [host, setHost] = React.useState(target.host || '');
   const [platform, setPlatform] = React.useState(target.platform || 'vcenter');
@@ -149,13 +149,12 @@ const LoginPage = () => {
           username, 
           password, 
           host, 
-          platform,
-          useVsphereAuth: true 
+          platform
         })
       });
       const data = await response.json();
       if (data.ok) {
-        setToken(data.token || 'no-auth-needed');
+        setToken(data.token);
         setTarget({ host, platform, username, password });
         if (data.inventory) setInventory(data.inventory);
       } else {

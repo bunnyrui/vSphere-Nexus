@@ -149,10 +149,6 @@ server.on("upgrade", (request, socket, head) => {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = join(__dirname, "..", "dist");
 
-const authUser = process.env.NEXUS_USER || "";
-const authPass = process.env.NEXUS_PASS || "";
-const authEnabled = Boolean(authUser && authPass);
-
 const sessions = new Map();
 const SESSION_MAX_AGE = 24 * 60 * 60 * 1000;
 const loginAttempts = new Map();
@@ -175,7 +171,7 @@ setInterval(() => {
 
 // --- Helpers ---
 
-const publicPaths = new Set(["/auth/login", "/auth/status", "/health"]);
+const publicPaths = new Set(["/auth/login", "/health"]);
 
 function extractToken(req) {
   const auth = req.headers.authorization;
@@ -209,22 +205,16 @@ function hydrateTargetFromSession(req) {
 
 // --- Security Middleware ---
 
-if (authEnabled) {
-  app.use("/api", (req, res, next) => {
-    if (publicPaths.has(req.path)) return next();
-    const token = extractToken(req);
-    if (!isValidToken(token)) {
-      return res.status(401).json({ error: "未认证" });
-    }
-    next();
-  });
-}
+app.use("/api", (req, res, next) => {
+  if (publicPaths.has(req.path)) return next();
+  const token = extractToken(req);
+  if (!isValidToken(token)) {
+    return res.status(401).json({ error: "未认证" });
+  }
+  next();
+});
 
 // --- Auth Routes ---
-
-app.get("/api/auth/status", (_req, res) => {
-  res.json({ enabled: authEnabled });
-});
 
 app.get("/api/auth/session", (req, res) => {
   const token = extractToken(req);
@@ -249,35 +239,26 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(429).json({ ok: false, error: "登录尝试过于频繁，请稍后再试" });
   }
 
-  const { username, password, host, platform, useVsphereAuth } = req.body ?? {};
+  const { username, password, host, platform } = req.body ?? {};
 
-  if (useVsphereAuth && host && username && password) {
-    try {
-      const target = { host, username, password, platform: platform || "vcenter" };
-      const inventory = await new VmService(target).discoverInventory();
-      loginAttempts.delete(clientKey);
-      const token = crypto.randomBytes(24).toString("hex");
-      sessions.set(token, { 
-        createdAt: Date.now(),
-        target,
-        inventory
-      });
-      return res.json({ ok: true, token, inventory });
-    } catch (err) {
-      return res.status(401).json({ ok: false, error: `vSphere 认证失败: ${err.message}` });
-    }
+  if (!host || !username || !password) {
+    return res.status(400).json({ ok: false, error: "请填写完整的连接信息" });
   }
 
-  if (!useVsphereAuth && authEnabled) {
-    if (username === authUser && password === authPass) {
-      loginAttempts.delete(clientKey);
-      const token = crypto.randomBytes(24).toString("hex");
-      sessions.set(token, { createdAt: Date.now() });
-      return res.json({ ok: true, token });
-    }
+  try {
+    const target = { host, username, password, platform: platform || "vcenter" };
+    const inventory = await new VmService(target).discoverInventory();
+    loginAttempts.delete(clientKey);
+    const token = crypto.randomBytes(24).toString("hex");
+    sessions.set(token, { 
+      createdAt: Date.now(),
+      target,
+      inventory
+    });
+    return res.json({ ok: true, token, inventory });
+  } catch (err) {
+    return res.status(401).json({ ok: false, error: `vSphere 认证失败: ${err.message}` });
   }
-
-  res.status(401).json({ ok: false, error: "用户名或密码错误" });
 });
 
 // --- Inventory & Target Routes ---
@@ -520,7 +501,7 @@ app.get("/api/health", async (_req, res) => {
     await access(resolvedPath, fsConstants.X_OK);
     ovftoolAvailable = true;
   } catch {}
-  res.json({ ok: true, authEnabled, ovftoolPath: resolvedPath, ovftoolAvailable });
+  res.json({ ok: true, ovftoolPath: resolvedPath, ovftoolAvailable });
 });
 
 app.get("/api/jobs", (_req, res) => {
@@ -535,7 +516,7 @@ app.get("/api/jobs/:id", (req, res) => {
 
 app.get("/api/jobs/:id/events", (req, res) => {
   const token = extractToken(req);
-  if (authEnabled && !isValidToken(token)) return res.status(401).json({ error: "未认证" });
+  if (!isValidToken(token)) return res.status(401).json({ error: "未认证" });
 
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
