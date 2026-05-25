@@ -102,6 +102,10 @@ export const DeploymentPage = () => {
   const handleStartDeployment = async () => {
     setError('');
     const count = deploymentConfig.naming.count;
+    if (!deploymentConfig.naming.prefix.trim()) {
+      setError('名称前缀不能为空');
+      return;
+    }
     if (!count || count < 1 || count > 100) {
       setError('部署数量必须在 1-100 之间');
       return;
@@ -358,7 +362,15 @@ export const DeploymentPage = () => {
           {/* Step 3: VM Config */}
           {currentStep === 2 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-4">
-               <div className="space-y-6">
+                {(() => {
+                  const sourceNetworks = inventory?.inventoryItems?.find(i => i.inventoryPath === target.sourceInventoryPath)?.sourceNetworks ?? ['VM Network'];
+                  const hasUnmappedNetwork = sourceNetworks.some(net => !deploymentConfig.networkMappings.find(m => m.source === net)?.target);
+                  const prefixEmpty = !deploymentConfig.naming.prefix.trim();
+                  const countInvalid = deploymentConfig.naming.count > 100 || deploymentConfig.naming.count < 1;
+                  const stepDisabled = prefixEmpty || countInvalid || hasUnmappedNetwork;
+                  return (
+                    <>
+                <div className="space-y-6">
                 <h3 className="font-semibold flex items-center gap-2">
                   <Layers size={18} className="text-primary" /> 批量命名规则
                 </h3>
@@ -370,7 +382,7 @@ export const DeploymentPage = () => {
                       value={deploymentConfig.naming.prefix}
                       onChange={e => setDeploymentConfig({ naming: { prefix: e.target.value } })}
                       placeholder="VM-Prod-"
-                      className="w-full px-3 py-2 border rounded-md outline-none"
+                      className={cn("w-full px-3 py-2 border rounded-md outline-none", prefixEmpty && "border-destructive")}
                     />
                   </div>
                   <div className="space-y-2">
@@ -443,12 +455,12 @@ export const DeploymentPage = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {(inventory?.inventoryItems?.find(i => i.inventoryPath === target.sourceInventoryPath)?.sourceNetworks ?? ['VM Network']).map((net, idx) => (
+                      {sourceNetworks.map((net, idx) => (
                         <tr key={idx}>
                           <td className="px-4 py-3">{net}</td>
                           <td className="px-4 py-3">
                             <select 
-                              className="w-full px-2 py-1 border rounded outline-none"
+                              className={cn("w-full px-2 py-1 border rounded outline-none", !deploymentConfig.networkMappings.find(m => m.source === net)?.target && "border-destructive")}
                               value={deploymentConfig.networkMappings.find(m => m.source === net)?.target || ''}
                               onChange={e => updateNetworkMapping(net, e.target.value)}
                             >
@@ -461,6 +473,11 @@ export const DeploymentPage = () => {
                     </tbody>
                   </table>
                 </div>
+                {hasUnmappedNetwork && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-sm font-medium">
+                    请为所有模板源网络选择目标网络映射
+                  </div>
+                )}
               </div>
 
               <div className="pt-12 flex justify-between">
@@ -472,12 +489,15 @@ export const DeploymentPage = () => {
                 </button>
                 <button 
                   onClick={handleNext}
-                  disabled={deploymentConfig.naming.count > 100 || deploymentConfig.naming.count < 1}
+                  disabled={stepDisabled}
                   className="bg-primary text-primary-foreground px-6 py-2 rounded-md font-medium hover:bg-primary/90 transition-all flex items-center gap-2 disabled:opacity-50"
                 >
                   下一步 <ChevronRight size={18} />
                 </button>
               </div>
+                    </>
+                  );
+                })()}
             </div>
           )}
 
